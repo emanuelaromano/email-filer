@@ -54,9 +54,9 @@ function clearExistingHighlightMarks() {
   })
 }
 
-function applyHighlightToSnippet(snippetText: string): boolean {
+function applyHighlightToSnippet(snippetText: string): number {
   const query = snippetText.trim()
-  if (!query) return false
+  if (!query) return 0
 
   const root = document.body
   const lowered = query.toLowerCase()
@@ -77,26 +77,55 @@ function applyHighlightToSnippet(snippetText: string): boolean {
     },
   })
 
-  const firstMatch = walker.nextNode() as Text | null
-  if (!firstMatch) return false
-
-  const content = firstMatch.textContent ?? ''
-  const start = content.toLowerCase().indexOf(lowered)
-  if (start < 0) return false
+  const textNodes: Text[] = []
+  let current = walker.nextNode()
+  while (current) {
+    textNodes.push(current as Text)
+    current = walker.nextNode()
+  }
+  if (textNodes.length === 0) return 0
 
   clearExistingHighlightMarks()
+  let matchCount = 0
+  let firstMark: Element | null = null
 
-  const range = document.createRange()
-  range.setStart(firstMatch, start)
-  range.setEnd(firstMatch, start + query.length)
+  for (const textNode of textNodes) {
+    const source = textNode.textContent ?? ''
+    const loweredSource = source.toLowerCase()
+    let start = loweredSource.indexOf(lowered)
+    if (start < 0) continue
 
-  const mark = document.createElement('mark')
-  mark.setAttribute(HIGHLIGHT_ATTR, '')
-  mark.style.backgroundColor = '#fff176'
-  mark.style.padding = '0 1px'
-  range.surroundContents(mark)
-  mark.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  return true
+    const fragment = document.createDocumentFragment()
+    let cursor = 0
+    while (start >= 0) {
+      if (start > cursor) {
+        fragment.appendChild(document.createTextNode(source.slice(cursor, start)))
+      }
+
+      const end = start + query.length
+      const mark = document.createElement('mark')
+      mark.setAttribute(HIGHLIGHT_ATTR, '')
+      mark.style.backgroundColor = '#fff176'
+      mark.style.padding = '0 1px'
+      mark.textContent = source.slice(start, end)
+      fragment.appendChild(mark)
+      if (!firstMark) firstMark = mark
+      matchCount += 1
+      cursor = end
+      start = loweredSource.indexOf(lowered, cursor)
+    }
+
+    if (cursor < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(cursor)))
+    }
+
+    textNode.parentNode?.replaceChild(fragment, textNode)
+  }
+
+  if (firstMark !== null) {
+    firstMark.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }
+  return matchCount
 }
 
 export default function SidebarApp() {
@@ -204,11 +233,15 @@ export default function SidebarApp() {
         return
       }
 
-      const highlighted = applyHighlightToSnippet(pending.text)
+      const highlightCount = applyHighlightToSnippet(pending.text)
       attempts += 1
-      if (highlighted) {
+      if (highlightCount > 0) {
         window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
-        setSaveStatus('Highlighted snippet in email.')
+        setSaveStatus(
+          highlightCount === 1
+            ? 'Highlighted 1 match in email.'
+            : `Highlighted ${highlightCount} matches in email.`,
+        )
       } else if (attempts >= maxAttempts) {
         window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
         setSaveStatus('Could not find that text in this email.')

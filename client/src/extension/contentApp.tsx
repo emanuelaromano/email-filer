@@ -39,6 +39,14 @@ function mount() {
   })
 
   const shadow = host.attachShadow({ mode: 'open' })
+  const baseStyle = document.createElement('style')
+  baseStyle.textContent = `
+    :host, * {
+      font-family: "Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+  `
+  shadow.appendChild(baseStyle)
+
   const mountPoint = document.createElement('div')
   mountPoint.style.cssText = 'height:100%;display:flex;flex-direction:column;'
   shadow.appendChild(mountPoint)

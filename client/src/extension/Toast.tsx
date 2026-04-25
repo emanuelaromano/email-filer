@@ -21,7 +21,9 @@ export default function Toast({ message, visible }: ToastProps) {
         bgcolor: '#202124',
         color: '#fff',
         fontSize: 12,
-        fontWeight: 500,
+        fontWeight: 400,
+        fontFamily:
+          '"Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
         whiteSpace: 'nowrap',
         boxShadow: '0 4px 10px rgba(60,64,67,0.35)',
         opacity: visible ? 1 : 0,

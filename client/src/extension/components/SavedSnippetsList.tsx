@@ -47,6 +47,8 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
             borderColor: 'divider',
             transition: 'background-color 120ms ease',
             borderRadius: 1,
+            borderBottomLeftRadius: 0,
+            borderBottomRightRadius: 0,
             '&:hover': {
               bgcolor: '#f8f9fa',
             },
@@ -63,7 +65,12 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
               lineHeight: 1.4,
               fontFamily:
                 '"Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
-              whiteSpace: 'pre-wrap',
+              display: '-webkit-box',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 3,
+              whiteSpace: 'pre-line',
               wordBreak: 'break-word',
             }}
           >

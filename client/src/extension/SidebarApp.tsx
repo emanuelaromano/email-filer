@@ -316,7 +316,7 @@ export default function SidebarApp() {
 
       {!collapsed && (
         <>
-          <Box sx={{ px: 1.5, pt: 2, pb: 1 }}>
+          <Box sx={{ px: 1.5, pt: 2, pb: 1, flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <ProjectsToolbar
               addOpen={addOpen}
               isOpenedView={isOpenedView}
@@ -604,7 +604,6 @@ export default function SidebarApp() {
               </Box>
             )}
           </Box>
-          <Box sx={{ flex: 1 }} />
         </>
       )}
       <Toast message={saveStatus} visible={Boolean(saveStatus)} />

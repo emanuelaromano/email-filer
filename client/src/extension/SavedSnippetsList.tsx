@@ -62,6 +62,7 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
               lineHeight: 1.4,
               fontFamily:
                 '"Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
+              whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}
           >

@@ -15,6 +15,7 @@ import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import FolderButton from './FolderButton'
 import SavedSnippetsList from './SavedSnippetsList'
+import Toast from './Toast'
 import { registerSaveShortcut } from './shortcuts'
 import { useExtensionProjects } from './useExtensionProjects'
 
@@ -112,6 +113,12 @@ export default function SidebarApp() {
       setSaveStatus(result.message)
     })
   }, [activeProject])
+
+  useEffect(() => {
+    if (!saveStatus) return
+    const timer = window.setTimeout(() => setSaveStatus(''), 2200)
+    return () => window.clearTimeout(timer)
+  }, [saveStatus])
 
   const handleAddSubmit = () => {
     const trimmed = newName.trim()
@@ -213,7 +220,7 @@ export default function SidebarApp() {
                 variant="caption"
                 sx={{ color: 'text.secondary', fontWeight: 500, letterSpacing: '0.08em' }}
               >
-                {openedProject ? `PROJECTS / ${openedProject}` : 'PROJECTS'}
+                {openedProject ? `PROJECTS - ${openedProject}` : 'PROJECTS'}
               </Typography>
               <Tooltip title={addOpen ? 'Close' : 'New project'}>
                 <IconButton
@@ -442,21 +449,9 @@ export default function SidebarApp() {
             )}
           </Box>
           <Box sx={{ flex: 1 }} />
-          <Box sx={{ px: 1.5, py: 1.5, bgcolor: 'background.default' }}>
-            <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
-              Active project: {activeProject}
-            </Typography>
-            {saveStatus ? (
-              <Typography
-                variant="caption"
-                sx={{ display: 'block', color: 'primary.main', mt: 0.5 }}
-              >
-                {saveStatus}
-              </Typography>
-            ) : null}
-          </Box>
         </>
       )}
+      <Toast message={saveStatus} visible={Boolean(saveStatus)} />
       <Menu
         open={Boolean(menuPos)}
         onClose={closeContextMenu}

@@ -34,12 +34,7 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
             borderRadius: 2.5,
             border: '1px solid #dadce0',
             bgcolor: '#fff',
-            color: '#202124',
-            fontSize: 12.5,
-            fontWeight: 500,
-            lineHeight: 1.4,
             textDecoration: 'none',
-            wordBreak: 'break-word',
             boxShadow: '0 1px 1px rgba(60,64,67,0.08)',
             transition:
               'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease',
@@ -54,7 +49,19 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
             },
           }}
         >
-          {item.text}
+          <Typography
+            variant="body2"
+            sx={{
+              color: '#202124',
+              fontWeight: 400,
+              lineHeight: 1.4,
+              fontFamily:
+                '"Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
+              wordBreak: 'break-word',
+            }}
+          >
+            {item.text}
+          </Typography>
         </Box>
       ))}
     </>

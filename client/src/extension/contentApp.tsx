@@ -9,9 +9,9 @@ import { gmailChromeTheme } from './gmailTheme'
 
 const HOST_ID = 'email-filer-sidebar-host'
 
-function ensureRobotoLink() {
+function ensureFontsLink() {
   const href =
-    'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap'
+    'https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500;700&display=swap'
   if (document.querySelector(`link[href="${href}"]`)) return
   const link = document.createElement('link')
   link.rel = 'stylesheet'
@@ -22,7 +22,7 @@ function ensureRobotoLink() {
 function mount() {
   if (document.getElementById(HOST_ID)) return
 
-  ensureRobotoLink()
+  ensureFontsLink()
 
   const host = document.createElement('div')
   host.id = HOST_ID

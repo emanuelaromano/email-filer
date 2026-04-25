@@ -1,25 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
-import CheckIcon from '@mui/icons-material/Check'
-import CloseIcon from '@mui/icons-material/Close'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
 import Box from '@mui/material/Box'
-import IconButton from '@mui/material/IconButton'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import FolderButton from './components/FolderButton'
 import ProjectInlineForm from './components/ProjectInlineForm'
+import ProjectRenameInlineForm from './components/ProjectRenameInlineForm'
 import ProjectsToolbar from './components/ProjectsToolbar'
 import SavedSnippetsList from './components/SavedSnippetsList'
 import SidebarHeader from './components/SidebarHeader'
 import Toast from './components/Toast'
+import { PENDING_HIGHLIGHT_KEY } from './storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
 import { registerSaveShortcut } from './utils/shortcuts'
-import { type ProjectNode, useExtensionProjects } from './useExtensionProjects'
+import { getNodeAtPath, useExtensionProjects } from './useExtensionProjects'
 
 const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48
 const SAVED_ITEMS_KEY = 'emailFilerProjectSavedItems'
-const PENDING_HIGHLIGHT_KEY = 'emailFilerPendingHighlight'
 const ROOT_SNIPPETS_KEY = '__root__'
 const ROOT_SNIPPETS_LABEL = 'Library'
 
@@ -41,17 +39,6 @@ type PendingHighlight = {
 }
 
 type ProjectPath = string[]
-
-function getNodeAtPath(nodes: ProjectNode[], path: ProjectPath): ProjectNode | null {
-  let branch = nodes
-  let current: ProjectNode | null = null
-  for (const segment of path) {
-    current = branch.find((node) => node.name === segment) ?? null
-    if (!current) return null
-    branch = current.children
-  }
-  return current
-}
 
 function isSamePath(left: ProjectPath | null, right: ProjectPath | null): boolean {
   if (left === right) return true
@@ -367,72 +354,17 @@ export default function SidebarApp() {
                 const path = [node.name]
                 const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
                 return isRenameTarget ? (
-                  <Box
-                    key={node.name}
-                    component="form"
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      handleRenameSubmit()
-                    }}
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 0.75,
-                      py: 1,
-                      px: 1.25,
-                      borderRadius: 999,
-                      border: '1px solid transparent',
-                      color: '#041e49',
-                      bgcolor: '#d3e3fd',
-                      '&:hover': { bgcolor: '#c2dbff' },
-                    }}
-                  >
-                    <FolderOutlinedIcon sx={{ fontSize: 18, color: '#174ea6' }} />
-                    <Box
-                      component="input"
-                      autoFocus
+                  <Box key={node.name}>
+                    <ProjectRenameInlineForm
                       value={renameName}
-                      onChange={(e) => setRenameName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') {
-                          e.preventDefault()
-                          setRenameOpen(false)
-                        }
-                      }}
+                      onChange={setRenameName}
+                      renameFromPath={renameFromPath}
+                      onSubmit={handleRenameSubmit}
+                      onCancel={() => setRenameOpen(false)}
                       placeholder="Project name"
-                      maxLength={80}
-                      sx={{
-                        flex: 1,
-                        minWidth: 0,
-                        border: 'none',
-                        outline: 'none',
-                        bgcolor: 'transparent',
-                        color: '#041e49',
-                        fontSize: 13,
-                        fontWeight: 500,
-                        lineHeight: 1.4,
-                        fontFamily:
-                          '"Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
-                      }}
+                      saveAriaLabel="Save project rename"
+                      cancelAriaLabel="Cancel project rename"
                     />
-                    <IconButton
-                      type="submit"
-                      size="small"
-                      aria-label="Save project rename"
-                      disabled={!renameName.trim() || renameName.trim() === (renameFromPath?.[renameFromPath.length - 1] ?? '')}
-                      sx={{ color: 'primary.main' }}
-                    >
-                      <CheckIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton
-                      type="button"
-                      size="small"
-                      aria-label="Cancel project rename"
-                      onClick={() => setRenameOpen(false)}
-                      sx={{ color: 'text.secondary' }}
-                    >
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
                   </Box>
                 ) : (
                   <Box key={node.name}>
@@ -495,72 +427,17 @@ export default function SidebarApp() {
                     const path = [...parentPath, node.name]
                     const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
                     return isRenameTarget ? (
-                      <Box
-                        key={path.join('\u0000')}
-                        component="form"
-                        onSubmit={(e) => {
-                          e.preventDefault()
-                          handleRenameSubmit()
-                        }}
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 0.75,
-                          py: 1,
-                          px: 1.25,
-                          borderRadius: 999,
-                          border: '1px solid transparent',
-                          color: '#041e49',
-                          bgcolor: '#d3e3fd',
-                          '&:hover': { bgcolor: '#c2dbff' },
-                        }}
-                      >
-                        <FolderOutlinedIcon sx={{ fontSize: 18, color: '#174ea6' }} />
-                        <Box
-                          component="input"
-                          autoFocus
+                      <Box key={path.join('\u0000')}>
+                        <ProjectRenameInlineForm
                           value={renameName}
-                          onChange={(e) => setRenameName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                              e.preventDefault()
-                              setRenameOpen(false)
-                            }
-                          }}
+                          onChange={setRenameName}
+                          renameFromPath={renameFromPath}
+                          onSubmit={handleRenameSubmit}
+                          onCancel={() => setRenameOpen(false)}
                           placeholder="Folder name"
-                          maxLength={80}
-                          sx={{
-                            flex: 1,
-                            minWidth: 0,
-                            border: 'none',
-                            outline: 'none',
-                            bgcolor: 'transparent',
-                            color: '#041e49',
-                            fontSize: 13,
-                            fontWeight: 500,
-                            lineHeight: 1.4,
-                            fontFamily:
-                              '"Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
-                          }}
+                          saveAriaLabel="Save folder rename"
+                          cancelAriaLabel="Cancel folder rename"
                         />
-                        <IconButton
-                          type="submit"
-                          size="small"
-                          aria-label="Save folder rename"
-                          disabled={!renameName.trim() || renameName.trim() === (renameFromPath?.[renameFromPath.length - 1] ?? '')}
-                          sx={{ color: 'primary.main' }}
-                        >
-                          <CheckIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          type="button"
-                          size="small"
-                          aria-label="Cancel folder rename"
-                          onClick={() => setRenameOpen(false)}
-                          sx={{ color: 'text.secondary' }}
-                        >
-                          <CloseIcon fontSize="small" />
-                        </IconButton>
                       </Box>
                     ) : (
                       <Box key={path.join('\u0000')}>

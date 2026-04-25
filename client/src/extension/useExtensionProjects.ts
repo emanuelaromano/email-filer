@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { flushSync } from 'react-dom'
 
 const STORAGE_KEY = 'emailFilerProjectNames'
 
@@ -49,7 +50,7 @@ function sanitizeTree(input: unknown): ProjectNode[] {
   return input.map(toNode).filter(Boolean) as ProjectNode[]
 }
 
-function getNodeAtPath(nodes: ProjectNode[], path: string[]): ProjectNode | null {
+export function getNodeAtPath(nodes: ProjectNode[], path: string[]): ProjectNode | null {
   let currentNodes = nodes
   let current: ProjectNode | null = null
   for (const segment of path) {
@@ -100,7 +101,6 @@ function deleteNodeAtPath(nodes: ProjectNode[], path: string[]): ProjectNode[] {
 
 export function useExtensionProjects() {
   const [projects, setProjects] = useState<ProjectNode[]>([])
-  const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get([STORAGE_KEY], (result) => {
@@ -112,7 +112,6 @@ export function useExtensionProjects() {
       } else {
         setProjects(sanitizeTree(raw))
       }
-      setHydrated(true)
     })
   }, [])
 
@@ -132,12 +131,14 @@ export function useExtensionProjects() {
     if (path.length === 0 || !nextName) return false
 
     let renamed = false
-    setProjects((prev) => {
-      const next = renameNodeAtPath(prev, path, nextName)
-      if (next === prev) return prev
-      void chrome.storage.local.set({ [STORAGE_KEY]: next })
-      renamed = true
-      return next
+    flushSync(() => {
+      setProjects((prev) => {
+        const next = renameNodeAtPath(prev, path, nextName)
+        if (next === prev) return prev
+        void chrome.storage.local.set({ [STORAGE_KEY]: next })
+        renamed = true
+        return next
+      })
     })
     return renamed
   }, [])
@@ -145,15 +146,17 @@ export function useExtensionProjects() {
   const deleteProject = useCallback((path: string[]) => {
     if (path.length === 0) return false
     let removed = false
-    setProjects((prev) => {
-      const next = deleteNodeAtPath(prev, path)
-      if (next === prev) return prev
-      void chrome.storage.local.set({ [STORAGE_KEY]: next })
-      removed = true
-      return next
+    flushSync(() => {
+      setProjects((prev) => {
+        const next = deleteNodeAtPath(prev, path)
+        if (next === prev) return prev
+        void chrome.storage.local.set({ [STORAGE_KEY]: next })
+        removed = true
+        return next
+      })
     })
     return removed
   }, [])
 
-  return { projects, addProject, renameProject, deleteProject, hydrated }
+  return { projects, addProject, renameProject, deleteProject }
 }

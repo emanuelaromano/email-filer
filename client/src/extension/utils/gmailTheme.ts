@@ -51,28 +51,5 @@ export const gmailChromeTheme = createTheme({
         root: { textTransform: 'none', borderRadius: 999, fontWeight: 500 },
       },
     },
-    MuiOutlinedInput: {
-      styleOverrides: {
-        root: {
-          borderRadius: 8,
-          backgroundColor: '#f1f3f4',
-          '& fieldset': { borderColor: 'transparent' },
-          '&:hover fieldset': { borderColor: '#dadce0' },
-          '&.Mui-focused fieldset': { borderColor: '#1a73e8' },
-        },
-      },
-    },
-    MuiListItemButton: {
-      styleOverrides: {
-        root: {
-          borderRadius: 8,
-          '&:hover': { backgroundColor: 'rgba(32,33,36,0.059)' },
-          '&.Mui-selected': {
-            backgroundColor: 'rgba(26,115,232,0.12)',
-            '&:hover': { backgroundColor: 'rgba(26,115,232,0.16)' },
-          },
-        },
-      },
-    },
   },
 })

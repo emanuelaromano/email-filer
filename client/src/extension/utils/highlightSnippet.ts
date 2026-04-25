@@ -1,4 +1,4 @@
-export type TextRange = {
+type TextRange = {
   start: number
   end: number
 }

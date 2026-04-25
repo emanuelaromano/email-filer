@@ -1,7 +1,6 @@
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-
-const PENDING_HIGHLIGHT_KEY = 'emailFilerPendingHighlight'
+import { PENDING_HIGHLIGHT_KEY } from '../storageKeys'
 
 type SavedSnippet = {
   id: string

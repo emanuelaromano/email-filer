@@ -13,7 +13,11 @@ import Toast from './components/Toast'
 import { PENDING_HIGHLIGHT_KEY } from './storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
 import { registerSaveShortcut } from './utils/shortcuts'
-import { getNodeAtPath, useExtensionProjects } from './useExtensionProjects'
+import {
+  getNodeAtPath,
+  type ProjectNode,
+  useExtensionProjects,
+} from './useExtensionProjects'
 
 const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48
@@ -49,6 +53,17 @@ function isSamePath(left: ProjectPath | null, right: ProjectPath | null): boolea
 
 function getProjectStorageKey(path: ProjectPath): string {
   return JSON.stringify(path)
+}
+
+function collectProjectStorageKeys(
+  path: ProjectPath,
+  node: ProjectNode,
+): string[] {
+  const keys = [getProjectStorageKey(path)]
+  for (const child of node.children) {
+    keys.push(...collectProjectStorageKeys([...path, child.name], child))
+  }
+  return keys
 }
 
 export default function SidebarApp() {
@@ -233,9 +248,6 @@ export default function SidebarApp() {
     addProject(trimmed, parentPath)
     const nextPath = [...parentPath, trimmed]
     setSelectedPath(nextPath)
-    if (openedProjectPath) {
-      setOpenedProjectPath(nextPath)
-    }
     setNewName('')
     setAddOpen(false)
   }
@@ -270,7 +282,31 @@ export default function SidebarApp() {
 
   const handleDeleteProject = () => {
     if (!menuProjectPath) return
+    const nodeToDelete = getNodeAtPath(projects, menuProjectPath)
+    const storageKeysToDelete = nodeToDelete
+      ? collectProjectStorageKeys(menuProjectPath, nodeToDelete)
+      : [getProjectStorageKey(menuProjectPath)]
+
     const removed = deleteProject(menuProjectPath)
+    if (removed) {
+      chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
+        const byProject =
+          (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
+        let changed = false
+        const next = { ...byProject }
+        for (const key of storageKeysToDelete) {
+          if (key in next) {
+            delete next[key]
+            changed = true
+          }
+        }
+        if (!changed) return
+        setSavedItemsByProject(next)
+        void chrome.storage.local.set({ [SAVED_ITEMS_KEY]: next })
+      })
+      setSaveStatus('Folder and contents deleted.')
+    }
+
     if (
       removed &&
       selectedPath &&

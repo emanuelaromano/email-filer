@@ -3,6 +3,12 @@ export type TextRange = {
   end: number
 }
 
+type IndexedTextNode = {
+  node: Text
+  start: number
+  end: number
+}
+
 const HIGHLIGHT_ATTR = 'data-email-filer-highlight'
 
 function clearExistingHighlightMarks() {
@@ -75,6 +81,60 @@ function findRangesByWordSequence(source: string, query: string): TextRange[] {
   return ranges
 }
 
+function mergeRanges(ranges: TextRange[]): TextRange[] {
+  if (ranges.length <= 1) return ranges
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end)
+  const merged: TextRange[] = [sorted[0]]
+  for (let i = 1; i < sorted.length; i += 1) {
+    const current = sorted[i]
+    const previous = merged[merged.length - 1]
+    if (current.start <= previous.end) {
+      previous.end = Math.max(previous.end, current.end)
+      continue
+    }
+    merged.push({ ...current })
+  }
+  return merged
+}
+
+function shouldInsertBoundarySeparator(previous: string, next: string): boolean {
+  if (!previous || !next) return false
+  const prevChar = previous[previous.length - 1]
+  const nextChar = next[0]
+  const prevIsWord = /[a-z0-9]/i.test(prevChar)
+  const nextIsWord = /[a-z0-9]/i.test(nextChar)
+  return prevIsWord && nextIsWord
+}
+
+function createDocumentTextIndex(textNodes: Text[]): {
+  fullText: string
+  segments: IndexedTextNode[]
+} {
+  const chunks: string[] = []
+  const segments: IndexedTextNode[] = []
+  let cursor = 0
+  let previousText = ''
+
+  for (const node of textNodes) {
+    const value = node.textContent ?? ''
+    if (!value) continue
+
+    if (shouldInsertBoundarySeparator(previousText, value)) {
+      chunks.push(' ')
+      cursor += 1
+    }
+
+    const start = cursor
+    const end = start + value.length
+    chunks.push(value)
+    segments.push({ node, start, end })
+    cursor = end
+    previousText = value
+  }
+
+  return { fullText: chunks.join(''), segments }
+}
+
 export function applyHighlightToSnippet(snippetText: string): number {
   const query = snippetText.trim()
   if (!query) return 0
@@ -103,22 +163,41 @@ export function applyHighlightToSnippet(snippetText: string): number {
   }
   if (textNodes.length === 0) return 0
 
-  clearExistingHighlightMarks()
-  let matchCount = 0
-  let firstMark: Element | null = null
+  const { fullText, segments } = createDocumentTextIndex(textNodes)
+  if (!fullText) return 0
 
-  for (const textNode of textNodes) {
-    const source = textNode.textContent ?? ''
-    const ranges = findRangesByWhitespaceRegex(source, query)
-    const finalRanges = ranges.length > 0 ? ranges : findRangesByWordSequence(source, query)
-    if (finalRanges.length === 0) continue
+  const ranges = findRangesByWhitespaceRegex(fullText, query)
+  const finalRanges = mergeRanges(
+    ranges.length > 0 ? ranges : findRangesByWordSequence(fullText, query),
+  )
+  if (finalRanges.length === 0) return 0
+
+  clearExistingHighlightMarks()
+  let firstMark: Element | null = null
+  let matchCount = 0
+
+  for (const segment of segments) {
+    const source = segment.node.textContent ?? ''
+    if (!source) continue
+
+    const localRanges: TextRange[] = []
+    for (const range of finalRanges) {
+      if (range.end <= segment.start) continue
+      if (range.start >= segment.end) break
+      localRanges.push({
+        start: Math.max(0, range.start - segment.start),
+        end: Math.min(source.length, range.end - segment.start),
+      })
+    }
+    if (localRanges.length === 0) continue
 
     const fragment = document.createDocumentFragment()
-    let cursor = 0
-    for (const { start, end } of finalRanges) {
-      if (start > cursor) {
-        fragment.appendChild(document.createTextNode(source.slice(cursor, start)))
+    let localCursor = 0
+    for (const { start, end } of localRanges) {
+      if (start > localCursor) {
+        fragment.appendChild(document.createTextNode(source.slice(localCursor, start)))
       }
+      if (end <= start) continue
 
       const mark = document.createElement('mark')
       mark.setAttribute(HIGHLIGHT_ATTR, '')
@@ -128,14 +207,14 @@ export function applyHighlightToSnippet(snippetText: string): number {
       fragment.appendChild(mark)
       if (!firstMark) firstMark = mark
       matchCount += 1
-      cursor = end
+      localCursor = end
     }
 
-    if (cursor < source.length) {
-      fragment.appendChild(document.createTextNode(source.slice(cursor)))
+    if (localCursor < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(localCursor)))
     }
 
-    textNode.parentNode?.replaceChild(fragment, textNode)
+    segment.node.parentNode?.replaceChild(fragment, segment.node)
   }
 
   if (firstMark !== null) {

@@ -218,7 +218,7 @@ export default function SidebarApp() {
             >
               <Typography
                 variant="caption"
-                sx={{ color: 'text.secondary', fontWeight: 500, letterSpacing: '0.08em' }}
+                sx={{ color: 'text.secondary', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.08em' }}
               >
                 {openedProject ? `PROJECTS - ${openedProject}` : 'PROJECTS'}
               </Typography>

@@ -21,7 +21,7 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
   }
 
   return (
-    <>
+    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
       {items.map((item) => (
         <Box
           key={item.id}
@@ -29,23 +29,17 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
           href={item.link}
           title={item.text}
           sx={{
-            px: 1.25,
-            py: 0.9,
-            borderRadius: 2.5,
-            border: '1px solid #dadce0',
-            bgcolor: '#fff',
+            px: 0.25,
+            py: 1,
             textDecoration: 'none',
-            boxShadow: '0 1px 1px rgba(60,64,67,0.08)',
-            transition:
-              'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            transition: 'background-color 120ms ease',
             '&:hover': {
               bgcolor: '#f8f9fa',
-              borderColor: '#c6c6c6',
-              boxShadow: '0 1px 2px rgba(60,64,67,0.16)',
             },
             '&:active': {
               bgcolor: '#eef3fd',
-              borderColor: '#aecbfa',
             },
           }}
         >
@@ -64,6 +58,6 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
           </Typography>
         </Box>
       ))}
-    </>
+    </Box>
   )
 }

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import CheckIcon from '@mui/icons-material/Check'
-import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined'
 import CloseIcon from '@mui/icons-material/Close'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
 import Box from '@mui/material/Box'
@@ -19,10 +18,10 @@ import { type ProjectNode, useExtensionProjects } from './useExtensionProjects'
 
 const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48
-const GENERAL = 'General'
 const SAVED_ITEMS_KEY = 'emailFilerProjectSavedItems'
 const PENDING_HIGHLIGHT_KEY = 'emailFilerPendingHighlight'
-const GENERAL_PROJECT_KEY = '__general__'
+const ROOT_SNIPPETS_KEY = '__root__'
+const ROOT_SNIPPETS_LABEL = 'Library'
 
 type SavedItem = {
   id: string
@@ -61,20 +60,13 @@ function isSamePath(left: ProjectPath | null, right: ProjectPath | null): boolea
   return left.every((part, index) => part === right[index])
 }
 
-function getProjectStorageKey(path: ProjectPath | null): string {
-  if (!path || path.length === 0) return GENERAL_PROJECT_KEY
+function getProjectStorageKey(path: ProjectPath): string {
   return JSON.stringify(path)
-}
-
-function getLegacyProjectStorageKey(path: ProjectPath | null): string {
-  if (!path || path.length === 0) return GENERAL
-  return path.join('/')
 }
 
 export default function SidebarApp() {
   const [collapsed, setCollapsed] = useState(false)
-  const { projects, addProject, renameProject, deleteProject, hydrated } =
-    useExtensionProjects()
+  const { projects, addProject, renameProject, deleteProject } = useExtensionProjects()
   const [selectedPath, setSelectedPath] = useState<ProjectPath | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -85,45 +77,66 @@ export default function SidebarApp() {
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(
     null,
   )
+  const [snippetMenuItemId, setSnippetMenuItemId] = useState<string | null>(null)
+  const [snippetMenuStorageKey, setSnippetMenuStorageKey] = useState<string | null>(null)
+  const [snippetMenuPos, setSnippetMenuPos] = useState<{ top: number; left: number } | null>(
+    null,
+  )
   const [saveStatus, setSaveStatus] = useState<string>('')
   const [savedItemsByProject, setSavedItemsByProject] = useState<
     Record<string, SavedItem[]>
   >({})
   const [openedProjectPath, setOpenedProjectPath] = useState<ProjectPath | null>(null)
-  const [openedGeneral, setOpenedGeneral] = useState(false)
 
   const openedProjectNode = useMemo(
     () => (openedProjectPath ? getNodeAtPath(projects, openedProjectPath) : null),
     [projects, openedProjectPath],
   )
-  const isOpenedView = openedGeneral || openedProjectPath !== null
+  const isOpenedView = openedProjectPath !== null
   const rootProjects = projects
-  const openedProjectChildren = openedGeneral ? [] : (openedProjectNode?.children ?? [])
-
-  const activeProject = useMemo(() => {
-    if (!hydrated) return { label: GENERAL, path: null as ProjectPath | null }
-    if (!selectedPath) return { label: GENERAL, path: null as ProjectPath | null }
-    const selectedNode = getNodeAtPath(projects, selectedPath)
-    if (!selectedNode) return { label: GENERAL, path: null as ProjectPath | null }
-    return { label: selectedNode.name, path: selectedPath }
-  }, [hydrated, projects, selectedPath])
+  const openedProjectChildren = openedProjectNode?.children ?? []
 
   const width = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH
-  const openedProjectItems = openedGeneral
-    ? (savedItemsByProject[GENERAL_PROJECT_KEY] ?? savedItemsByProject[GENERAL] ?? [])
-    : openedProjectPath
-      ? (
-          savedItemsByProject[getProjectStorageKey(openedProjectPath)] ??
-          savedItemsByProject[getLegacyProjectStorageKey(openedProjectPath)] ??
-          []
-        )
-      : []
-  const openedProjectLabel = openedGeneral ? GENERAL : (openedProjectPath?.join(' / ') ?? '')
+  const rootSnippetsItems = savedItemsByProject[ROOT_SNIPPETS_KEY] ?? []
+  const openedProjectItems = openedProjectPath
+    ? (savedItemsByProject[getProjectStorageKey(openedProjectPath)] ?? [])
+    : []
+  const openedProjectLabel = openedProjectPath?.join(' - ') ?? ''
+
+  /**
+   * Save shortcut target: open folder if any, otherwise root library (Finder-style window,
+   * not the selected row highlight).
+   */
+  const saveShortcutTarget = useMemo(() => {
+    if (openedProjectPath) {
+      return {
+        projectKey: getProjectStorageKey(openedProjectPath),
+        projectLabel: openedProjectLabel,
+      }
+    }
+    return { projectKey: ROOT_SNIPPETS_KEY, projectLabel: ROOT_SNIPPETS_LABEL }
+  }, [openedProjectPath, openedProjectLabel])
+
+  const handleDeleteSavedSnippet = (snippetId: string, projectKey: string) => {
+    chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
+      const byProject =
+        (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
+      const existing = Array.isArray(byProject[projectKey]) ? byProject[projectKey] : []
+      const nextItems = existing.filter((item) => item.id !== snippetId)
+      const next = {
+        ...byProject,
+        [projectKey]: nextItems,
+      }
+
+      setSavedItemsByProject(next)
+      void chrome.storage.local.set({ [SAVED_ITEMS_KEY]: next })
+      setSaveStatus('Snippet deleted.')
+    })
+  }
 
   const saveHighlightedSelection = (
     projectKey: string,
     projectLabel: string,
-    projectPath: ProjectPath | null,
   ): SaveResult => {
     const selection = window.getSelection()?.toString() ?? ''
     if (!selection.trim()) {
@@ -141,19 +154,12 @@ export default function SidebarApp() {
     chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
       const byProject =
         (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
-      const legacyKey =
-        projectKey === GENERAL_PROJECT_KEY
-          ? GENERAL
-          : getLegacyProjectStorageKey(projectPath)
       const existing = Array.isArray(byProject[projectKey])
         ? byProject[projectKey]
-        : (Array.isArray(byProject[legacyKey]) ? byProject[legacyKey] : [])
+        : []
       const next = {
         ...byProject,
         [projectKey]: [item, ...existing],
-      }
-      if (legacyKey !== projectKey && legacyKey in next) {
-        delete next[legacyKey]
       }
       setSavedItemsByProject(next)
       void chrome.storage.local.set({ [SAVED_ITEMS_KEY]: next })
@@ -173,13 +179,12 @@ export default function SidebarApp() {
   useEffect(() => {
     return registerSaveShortcut(() => {
       const result = saveHighlightedSelection(
-        getProjectStorageKey(activeProject.path),
-        activeProject.label,
-        activeProject.path,
+        saveShortcutTarget.projectKey,
+        saveShortcutTarget.projectLabel,
       )
       setSaveStatus(result.message)
     })
-  }, [activeProject])
+  }, [saveShortcutTarget])
 
   useEffect(() => {
     let attempts = 0
@@ -241,7 +246,6 @@ export default function SidebarApp() {
     addProject(trimmed, parentPath)
     const nextPath = [...parentPath, trimmed]
     setSelectedPath(nextPath)
-    setOpenedGeneral(false)
     if (openedProjectPath) {
       setOpenedProjectPath(nextPath)
     }
@@ -252,6 +256,12 @@ export default function SidebarApp() {
   const closeContextMenu = () => {
     setMenuProjectPath(null)
     setMenuPos(null)
+  }
+
+  const closeSnippetContextMenu = () => {
+    setSnippetMenuItemId(null)
+    setSnippetMenuStorageKey(null)
+    setSnippetMenuPos(null)
   }
 
   const handleRenameSubmit = () => {
@@ -330,9 +340,6 @@ export default function SidebarApp() {
                   }
                   return
                 }
-                if (openedGeneral) {
-                  setOpenedGeneral(false)
-                }
               }}
               onToggleAdd={() => {
                 if (addOpen) {
@@ -356,30 +363,6 @@ export default function SidebarApp() {
                   onSubmit={handleAddSubmit}
                 />
               )}
-              <Box>
-                <FolderButton
-                  name={GENERAL}
-                  isActive={activeProject.path === null}
-                      onClick={() => {
-                        setSelectedPath(null)
-                        setOpenedGeneral(false)
-                      }}
-                      onDoubleClick={() => {
-                        setSelectedPath(null)
-                        setOpenedGeneral(true)
-                        setOpenedProjectPath(null)
-                      }}
-                  startIcon={
-                    <InboxOutlinedIcon
-                      sx={{
-                        fontSize: 18,
-                        opacity: activeProject.path === null ? 1 : 0.85,
-                        color: activeProject.path === null ? '#174ea6' : '#5f6368',
-                      }}
-                    />
-                  }
-                />
-              </Box>
               {rootProjects.map((node) => {
                 const path = [node.name]
                 const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
@@ -455,15 +438,13 @@ export default function SidebarApp() {
                   <Box key={node.name}>
                     <FolderButton
                       name={node.name}
-                      isActive={isSamePath(activeProject.path, path)}
+                      isActive={isSamePath(selectedPath, path)}
                       onClick={() => {
                         setSelectedPath(path)
-                        setOpenedGeneral(false)
                       }}
                       onDoubleClick={() => {
                         setSelectedPath(path)
                         setOpenedProjectPath(path)
-                        setOpenedGeneral(false)
                       }}
                       onContextMenu={(e) => {
                         e.preventDefault()
@@ -474,7 +455,7 @@ export default function SidebarApp() {
                         <FolderOutlinedIcon
                           sx={{
                             fontSize: 18,
-                            opacity: isSamePath(activeProject.path, path) ? 1 : 0.7,
+                            opacity: isSamePath(selectedPath, path) ? 1 : 0.7,
                           }}
                         />
                       }
@@ -482,6 +463,18 @@ export default function SidebarApp() {
                   </Box>
                 )
               })}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 0.5 }}>
+                  <SavedSnippetsList
+                    items={rootSnippetsItems}
+                    showEmptyMessage={rootProjects.length === 0}
+                    onSnippetContextMenu={(id, position) => {
+                      closeContextMenu()
+                      setSnippetMenuItemId(id)
+                      setSnippetMenuStorageKey(ROOT_SNIPPETS_KEY)
+                      setSnippetMenuPos(position)
+                    }}
+                  />
+                </Box>
               </Box>
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -573,12 +566,11 @@ export default function SidebarApp() {
                       <Box key={path.join('\u0000')}>
                         <FolderButton
                           name={node.name}
-                          isActive={isSamePath(activeProject.path, path)}
+                          isActive={isSamePath(selectedPath, path)}
                           onClick={() => setSelectedPath(path)}
                           onDoubleClick={() => {
                             setSelectedPath(path)
                             setOpenedProjectPath(path)
-                            setOpenedGeneral(false)
                           }}
                           onContextMenu={(e) => {
                             e.preventDefault()
@@ -589,7 +581,7 @@ export default function SidebarApp() {
                             <FolderOutlinedIcon
                               sx={{
                                 fontSize: 18,
-                                opacity: isSamePath(activeProject.path, path) ? 1 : 0.7,
+                                opacity: isSamePath(selectedPath, path) ? 1 : 0.7,
                               }}
                             />
                           }
@@ -599,7 +591,18 @@ export default function SidebarApp() {
                   })}
                 </Box>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-                  <SavedSnippetsList items={openedProjectItems} />
+                  <SavedSnippetsList
+                    items={openedProjectItems}
+                    showEmptyMessage={openedProjectChildren.length === 0}
+                    onSnippetContextMenu={(id, position) => {
+                      closeContextMenu()
+                      setSnippetMenuItemId(id)
+                      if (openedProjectPath) {
+                        setSnippetMenuStorageKey(getProjectStorageKey(openedProjectPath))
+                      }
+                      setSnippetMenuPos(position)
+                    }}
+                  />
                 </Box>
               </Box>
             )}
@@ -630,6 +633,28 @@ export default function SidebarApp() {
           Rename
         </MenuItem>
         <MenuItem onClick={handleDeleteProject}>Delete</MenuItem>
+      </Menu>
+      <Menu
+        open={Boolean(snippetMenuPos)}
+        onClose={closeSnippetContextMenu}
+        disableScrollLock
+        disablePortal
+        anchorReference="anchorPosition"
+        anchorPosition={
+          snippetMenuPos
+            ? { top: snippetMenuPos.top, left: snippetMenuPos.left }
+            : undefined
+        }
+      >
+        <MenuItem
+          onClick={() => {
+            if (!snippetMenuItemId || !snippetMenuStorageKey) return
+            handleDeleteSavedSnippet(snippetMenuItemId, snippetMenuStorageKey)
+            closeSnippetContextMenu()
+          }}
+        >
+          Delete
+        </MenuItem>
       </Menu>
     </Box>
   )

@@ -11,10 +11,17 @@ type SavedSnippet = {
 
 type SavedSnippetsListProps = {
   items: SavedSnippet[]
+  onSnippetContextMenu: (id: string, position: { top: number; left: number }) => void
+  showEmptyMessage?: boolean
 }
 
-export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
+export default function SavedSnippetsList({
+  items,
+  onSnippetContextMenu,
+  showEmptyMessage = true,
+}: SavedSnippetsListProps) {
   if (items.length === 0) {
+    if (!showEmptyMessage) return null
     return (
       <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: 12.5 }}>
         No saved items yet.
@@ -37,6 +44,10 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
             }
             window.sessionStorage.setItem(PENDING_HIGHLIGHT_KEY, JSON.stringify(payload))
             window.location.assign(item.link)
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            onSnippetContextMenu(item.id, { top: event.clientY, left: event.clientX })
           }}
           title={item.text}
           sx={{

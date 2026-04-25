@@ -5,7 +5,7 @@ import { CacheProvider } from '@emotion/react'
 import { ThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import SidebarApp from './SidebarApp'
-import { gmailChromeTheme } from './gmailTheme'
+import { gmailChromeTheme } from './utils/gmailTheme'
 
 const HOST_ID = 'email-filer-sidebar-host'
 

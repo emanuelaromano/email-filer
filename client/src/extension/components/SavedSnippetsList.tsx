@@ -46,6 +46,7 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
             borderBottom: '1px solid',
             borderColor: 'divider',
             transition: 'background-color 120ms ease',
+            borderRadius: 1,
             '&:hover': {
               bgcolor: '#f8f9fa',
             },

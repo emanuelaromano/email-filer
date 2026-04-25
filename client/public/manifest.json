@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Email Filer",
+  "version": "1.0.0",
+  "description": "Adds a Gmail-aligned sidebar on mail.google.com",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content-app.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

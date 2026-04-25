@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "deps": "conda activate webdev && npm install && cd client && npm install && cd ../server && pip install -r requirements.txt",
+    "deps": "npm install && cd client && npm install && cd ../server && pip install -r requirements.txt",
+    "build:extension": "cd client && npm run build",
     "dev": "concurrently \"cd client && npm run dev\" \"cd server && uvicorn main:app --reload\"",
     "git": "git add . && git commit -m \"update\" && git push"
   },

@@ -1,6 +1,8 @@
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 
+const PENDING_HIGHLIGHT_KEY = 'emailFilerPendingHighlight'
+
 type SavedSnippet = {
   id: string
   text: string
@@ -27,6 +29,15 @@ export default function SavedSnippetsList({ items }: SavedSnippetsListProps) {
           key={item.id}
           component="a"
           href={item.link}
+          onClick={(event) => {
+            event.preventDefault()
+            const payload = {
+              text: item.text,
+              createdAt: Date.now(),
+            }
+            window.sessionStorage.setItem(PENDING_HIGHLIGHT_KEY, JSON.stringify(payload))
+            window.location.assign(item.link)
+          }}
           title={item.text}
           sx={{
             px: 0.25,

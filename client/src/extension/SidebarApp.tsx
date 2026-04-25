@@ -23,6 +23,8 @@ const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48
 const GENERAL = 'General'
 const SAVED_ITEMS_KEY = 'emailFilerProjectSavedItems'
+const PENDING_HIGHLIGHT_KEY = 'emailFilerPendingHighlight'
+const HIGHLIGHT_ATTR = 'data-email-filer-highlight'
 
 type SavedItem = {
   id: string
@@ -34,6 +36,67 @@ type SavedItem = {
 type SaveResult = {
   ok: boolean
   message: string
+}
+
+type PendingHighlight = {
+  text: string
+  createdAt: number
+}
+
+function clearExistingHighlightMarks() {
+  const marks = document.querySelectorAll(`mark[${HIGHLIGHT_ATTR}]`)
+  marks.forEach((mark) => {
+    const parent = mark.parentNode
+    if (!parent) return
+    const textNode = document.createTextNode(mark.textContent ?? '')
+    parent.replaceChild(textNode, mark)
+    parent.normalize()
+  })
+}
+
+function applyHighlightToSnippet(snippetText: string): boolean {
+  const query = snippetText.trim()
+  if (!query) return false
+
+  const root = document.body
+  const lowered = query.toLowerCase()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const value = node.textContent ?? ''
+      if (!value.trim()) return NodeFilter.FILTER_REJECT
+      const parent = node.parentElement
+      if (!parent) return NodeFilter.FILTER_REJECT
+      if (parent.closest('[data-email-filer-extension]')) return NodeFilter.FILTER_REJECT
+      const tag = parent.tagName
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
+        return NodeFilter.FILTER_REJECT
+      }
+      return value.toLowerCase().includes(lowered)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
+    },
+  })
+
+  const firstMatch = walker.nextNode() as Text | null
+  if (!firstMatch) return false
+
+  const content = firstMatch.textContent ?? ''
+  const start = content.toLowerCase().indexOf(lowered)
+  if (start < 0) return false
+
+  clearExistingHighlightMarks()
+
+  const range = document.createRange()
+  range.setStart(firstMatch, start)
+  range.setEnd(firstMatch, start + query.length)
+
+  const mark = document.createElement('mark')
+  mark.setAttribute(HIGHLIGHT_ATTR, '')
+  mark.style.backgroundColor = '#fff176'
+  mark.style.padding = '0 1px'
+  range.surroundContents(mark)
+  mark.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  return true
 }
 
 export default function SidebarApp() {
@@ -113,6 +176,47 @@ export default function SidebarApp() {
       setSaveStatus(result.message)
     })
   }, [activeProject])
+
+  useEffect(() => {
+    let attempts = 0
+    const maxAttempts = 14
+
+    const timer = window.setInterval(() => {
+      const raw = window.sessionStorage.getItem(PENDING_HIGHLIGHT_KEY)
+      if (!raw) return
+
+      let pending: PendingHighlight
+      try {
+        pending = JSON.parse(raw) as PendingHighlight
+      } catch {
+        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
+        return
+      }
+
+      if (!pending.text) {
+        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
+        return
+      }
+
+      // expire stale highlight requests after 20 seconds
+      if (Date.now() - pending.createdAt > 20_000) {
+        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
+        return
+      }
+
+      const highlighted = applyHighlightToSnippet(pending.text)
+      attempts += 1
+      if (highlighted) {
+        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
+        setSaveStatus('Highlighted snippet in email.')
+      } else if (attempts >= maxAttempts) {
+        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
+        setSaveStatus('Could not find that text in this email.')
+      }
+    }, 700)
+
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (!saveStatus) return

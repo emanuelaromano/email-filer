@@ -2,6 +2,8 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import CloudDoneOutlinedIcon from '@mui/icons-material/CloudDoneOutlined'
 import CloudOffOutlinedIcon from '@mui/icons-material/CloudOffOutlined'
+import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined'
+import SyncOutlinedIcon from '@mui/icons-material/SyncOutlined'
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz'
 import Box from '@mui/material/Box'
 import IconButton from '@mui/material/IconButton'
@@ -50,8 +52,18 @@ export default function SidebarHeader({
             <Box
               component="span"
               role="status"
-              aria-label={syncStatus === 'synced' ? 'Synced' : 'Unsynced'}
-              title={syncStatus === 'synced' ? 'Synced' : 'Unsynced'}
+              aria-label={
+                syncStatus === 'synced' ? 'Synced' :
+                syncStatus === 'syncing' ? 'Syncing…' :
+                syncStatus === 'pending' ? 'Sync pending' :
+                'Sync error'
+              }
+              title={
+                syncStatus === 'synced' ? 'Synced' :
+                syncStatus === 'syncing' ? 'Syncing…' :
+                syncStatus === 'pending' ? 'Sync pending' :
+                'Sync error — changes may not be saved'
+              }
               sx={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -59,11 +71,18 @@ export default function SidebarHeader({
                 color: 'text.secondary',
               }}
             >
-              {syncStatus === 'synced' ? (
-                <CloudDoneOutlinedIcon sx={{ fontSize: 18 }} />
-              ) : (
-                <CloudOffOutlinedIcon sx={{ fontSize: 18 }} />
+              {syncStatus === 'synced' && <CloudDoneOutlinedIcon sx={{ fontSize: 18 }} />}
+              {syncStatus === 'syncing' && (
+                <SyncOutlinedIcon
+                  sx={{
+                    fontSize: 18,
+                    animation: 'email-filer-spin 1.2s linear infinite',
+                    '@keyframes email-filer-spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
+                  }}
+                />
               )}
+              {syncStatus === 'pending' && <CloudUploadOutlinedIcon sx={{ fontSize: 18 }} />}
+              {syncStatus === 'error' && <CloudOffOutlinedIcon sx={{ fontSize: 18 }} />}
             </Box>
           )}
         </Box>

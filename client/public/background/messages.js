@@ -44,6 +44,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         await chrome.storage.local.remove([
           DRIVE_CONNECTED_KEY,
           DRIVE_FOLDER_ID_KEY,
+          DRIVE_SYNCED_STATE_KEY,
+          DRIVE_FOLDER_MAP_KEY,
           LOCAL_STATE_KEY,
           LOCAL_STATE_DIRTY_KEY,
           LOCAL_STATE_REVISION_KEY,

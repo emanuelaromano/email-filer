@@ -63,25 +63,11 @@ async function getFileText(token, fileId) {
   return response.text()
 }
 
-function escapeDriveQueryValue(value) {
-  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-}
-
 async function listChildItems(token, parentId) {
   const query = encodeURIComponent(`'${parentId}' in parents and trashed=false`)
   const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id,name,mimeType,createdTime)&orderBy=name_natural`
   const result = await driveRequest(token, url)
   return Array.isArray(result?.files) ? result.files : []
-}
-
-async function findFolderByName(token, parentId, name) {
-  const safeName = escapeDriveQueryValue(name)
-  const query = encodeURIComponent(
-    `'${parentId}' in parents and trashed=false and mimeType='${FOLDER_MIME_TYPE}' and name='${safeName}'`,
-  )
-  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id,name)&pageSize=1`
-  const result = await driveRequest(token, url)
-  return result?.files?.[0] ?? null
 }
 
 async function createFolderInParent(token, parentId, name) {
@@ -111,6 +97,10 @@ function snippetFileName(text) {
   return `${safe}-${Date.now()}.txt`
 }
 
+function isDriveFileId(id) {
+  return typeof id === 'string' && id.length >= 20 && !id.startsWith('local-') && !id.startsWith('snippet-')
+}
+
 async function uploadSnippetFile(token, folderId, snippet) {
   const metadata = {
     name: snippetFileName(snippet.text),
@@ -136,10 +126,21 @@ async function uploadSnippetFile(token, folderId, snippet) {
     },
   )
   return {
-    id: snippet.id || created.id,
+    id: created.id,
     text: snippet.text,
     link: snippet.link,
     createdAt: created.createdTime ?? snippet.createdAt ?? new Date().toISOString(),
+  }
+}
+
+// Silently ignores errors (e.g. item already removed as part of a parent folder deletion).
+async function tryDeleteDriveItem(token, itemId) {
+  try {
+    await driveRequest(token, `https://www.googleapis.com/drive/v3/files/${itemId}`, {
+      method: 'DELETE',
+    })
+  } catch {
+    // ignore
   }
 }
 
@@ -153,6 +154,8 @@ async function getRootFolderIdOrThrow() {
 }
 
 async function hydrateFromDrive(token, rootFolderId) {
+  const folderMap = {}
+
   const buildFolder = async (folderId, path = []) => {
     const items = await listChildItems(token, folderId)
     const folderItems = items
@@ -175,71 +178,163 @@ async function hydrateFromDrive(token, rootFolderId) {
       }),
     )
 
+    const childResults = await Promise.all(
+      folderItems.map(async (folder) => {
+        const childPath = [...path, folder.name]
+        folderMap[pathKey(childPath)] = folder.id
+        const child = await buildFolder(folder.id, childPath)
+        return { name: folder.name, children: child.projects, snippetsByPath: child.snippetsByPath }
+      }),
+    )
+
     const snippetsByPath = { [pathKey(path)]: snippets }
-    const projects = []
-    for (const folder of folderItems) {
-      const child = await buildFolder(folder.id, [...path, folder.name])
-      projects.push({ name: folder.name, children: child.projects })
+    for (const child of childResults) {
       Object.assign(snippetsByPath, child.snippetsByPath)
     }
-    return { projects, snippetsByPath }
+
+    return {
+      projects: childResults.map(({ name, children }) => ({ name, children })),
+      snippetsByPath,
+    }
   }
 
   const loaded = await buildFolder(rootFolderId, [])
-  return sanitizeLocalState(loaded)
-}
+  const state = sanitizeLocalState(loaded)
 
-async function deleteDriveItem(token, itemId) {
-  await driveRequest(token, `https://www.googleapis.com/drive/v3/files/${itemId}`, {
-    method: 'DELETE',
+  await chrome.storage.local.set({
+    [DRIVE_FOLDER_MAP_KEY]: folderMap,
+    [DRIVE_SYNCED_STATE_KEY]: state,
   })
-}
 
-async function moveItemToFolder(token, itemId, fromFolderId, toFolderId) {
-  await driveRequest(
-    token,
-    `https://www.googleapis.com/drive/v3/files/${itemId}?addParents=${toFolderId}&removeParents=${fromFolderId}&fields=id`,
-    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' },
-  )
+  return state
 }
 
 async function pushStateToDriveAsFolders(token, rootFolderId, state) {
-  const STAGING_NAME = '_staging_'
-  const nextSnippetsByPath = {}
+  const cached = await chrome.storage.local.get([DRIVE_FOLDER_MAP_KEY, DRIVE_SYNCED_STATE_KEY])
+  const folderMap = { ...(cached[DRIVE_FOLDER_MAP_KEY] ?? {}) }
+  const lastSynced = cached[DRIVE_SYNCED_STATE_KEY] ?? null
 
-  const buildRecursive = async (parentId, nodes, path = []) => {
-    const key = pathKey(path)
-    const snippets = state.snippetsByPath[key] ?? []
-    const uploaded = []
+  // Collect the Drive file IDs that still exist in local state.
+  const localDriveIds = new Set()
+  for (const snippets of Object.values(state.snippetsByPath)) {
     for (const snippet of snippets) {
-      if (!snippet.text || !snippet.link) continue
-      const remoteSnippet = await uploadSnippetFile(token, parentId, snippet)
-      uploaded.push(remoteSnippet)
+      if (isDriveFileId(snippet.id)) localDriveIds.add(snippet.id)
     }
-    nextSnippetsByPath[key] = uploaded
+  }
 
+  // Compute the set of active folder paths from the current project tree.
+  const activeFolderPaths = new Set([pathKey([])])
+  const collectPaths = (nodes, path) => {
     for (const node of nodes) {
-      const createdFolder = await createFolderInParent(token, parentId, node.name)
-      await buildRecursive(createdFolder.id, node.children ?? [], [...path, node.name])
+      const childPath = [...path, node.name]
+      activeFolderPaths.add(pathKey(childPath))
+      collectPaths(node.children ?? [], childPath)
     }
   }
+  collectPaths(state.projects, [])
 
-  // Phase 1: build into a staging folder — old data untouched if this fails
-  const staging = await createFolderInParent(token, rootFolderId, STAGING_NAME)
-  await buildRecursive(staging.id, state.projects, [])
+  // Delete Drive folders that are no longer in the project tree.
+  const staleFolderKeys = Object.keys(folderMap).filter((k) => !activeFolderPaths.has(k))
+  const staleFolderPaths = staleFolderKeys.map(parsePathKey)
+  await Promise.all(
+    staleFolderKeys.map(async (k) => {
+      await tryDeleteDriveItem(token, folderMap[k])
+      delete folderMap[k]
+    }),
+  )
 
-  // Phase 2: swap — delete old children, move staging children to root
-  const oldItems = await listChildItems(token, rootFolderId)
-  for (const item of oldItems) {
-    if (item.id !== staging.id) {
-      await deleteDriveItem(token, item.id)
+  const invalidatedDriveIds = new Set()
+  if (lastSynced) {
+    const deletions = []
+    for (const [key, snippets] of Object.entries(lastSynced.snippetsByPath)) {
+      const keyPath = parsePathKey(key)
+      const inDeletedFolder = staleFolderPaths.some((sp) => isPathPrefix(sp, keyPath))
+      for (const snippet of snippets) {
+        if (!isDriveFileId(snippet.id)) continue
+        if (inDeletedFolder) {
+          invalidatedDriveIds.add(snippet.id)
+        } else if (!localDriveIds.has(snippet.id)) {
+          deletions.push(snippet.id)
+        }
+      }
     }
+    await Promise.all(deletions.map((id) => tryDeleteDriveItem(token, id)))
   }
-  const stagingChildren = await listChildItems(token, staging.id)
-  for (const item of stagingChildren) {
-    await moveItemToFolder(token, item.id, staging.id, rootFolderId)
+  if (!lastSynced) {
+    const existingItems = await listChildItems(token, rootFolderId)
+    await Promise.all(existingItems.map((item) => tryDeleteDriveItem(token, item.id)))
+    for (const k of Object.keys(folderMap)) delete folderMap[k]
   }
-  await deleteDriveItem(token, staging.id)
 
-  return { projects: state.projects, snippetsByPath: nextSnippetsByPath }
+  // Ensure all folders exist in Drive. For folders already in the map, verify they
+  // are still alive with a cheap metadata GET; if gone, invalidate and recreate.
+  const ensureFolders = async (nodes, path, parentId) => {
+    await Promise.all(
+      nodes.map(async (node) => {
+        const childPath = [...path, node.name]
+        const key = pathKey(childPath)
+        if (folderMap[key]) {
+          const meta = await driveRequest(
+            token,
+            `https://www.googleapis.com/drive/v3/files/${folderMap[key]}?fields=id,trashed`,
+          ).catch(() => null)
+          if (!meta || meta.trashed) delete folderMap[key]
+        }
+        if (!folderMap[key]) {
+          const created = await createFolderInParent(token, parentId, node.name)
+          folderMap[key] = created.id
+        }
+        await ensureFolders(node.children ?? [], childPath, folderMap[key])
+      }),
+    )
+  }
+  await ensureFolders(state.projects, [], rootFolderId)
+
+  // List the actual snippet file IDs present in each Drive folder. Any snippet whose
+  // Drive ID is absent from Drive has been deleted externally and must be re-uploaded.
+  const existingDriveFileIds = new Set()
+  await Promise.all(
+    [...activeFolderPaths].map(async (key) => {
+      const parsedPath = parsePathKey(key)
+      const folderId = parsedPath.length === 0 ? rootFolderId : folderMap[key]
+      if (!folderId) return
+      const items = await listChildItems(token, folderId)
+      for (const item of items) {
+        if (item.mimeType === SNIPPET_MIME_TYPE) existingDriveFileIds.add(item.id)
+      }
+    }),
+  )
+
+  const nextSnippetsByPath = {}
+  await Promise.all(
+    Object.entries(state.snippetsByPath).map(async ([key, snippets]) => {
+      const parsedPath = parsePathKey(key)
+      const folderId = parsedPath.length === 0 ? rootFolderId : folderMap[key]
+      if (!folderId) {
+        nextSnippetsByPath[key] = snippets
+        return
+      }
+      nextSnippetsByPath[key] = await Promise.all(
+        snippets
+          .filter((s) => s.text && s.link)
+          .map((snippet) => {
+            if (
+              isDriveFileId(snippet.id) &&
+              !invalidatedDriveIds.has(snippet.id) &&
+              existingDriveFileIds.has(snippet.id)
+            ) return snippet
+            return uploadSnippetFile(token, folderId, snippet)
+          }),
+      )
+    }),
+  )
+
+  const nextState = { projects: state.projects, snippetsByPath: nextSnippetsByPath }
+
+  await chrome.storage.local.set({
+    [DRIVE_FOLDER_MAP_KEY]: folderMap,
+    [DRIVE_SYNCED_STATE_KEY]: nextState,
+  })
+
+  return nextState
 }

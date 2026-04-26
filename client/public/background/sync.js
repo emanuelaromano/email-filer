@@ -10,7 +10,6 @@ function scheduleLocalStateSync() {
     void trySyncLocalStateToDrive()
   }, SYNC_DEBOUNCE_MS)
 
-  // Fallback wake-up in case the MV3 worker is suspended before the timeout fires.
   chrome.alarms.create(SYNC_ALARM_NAME, {
     delayInMinutes: SYNC_ALARM_FALLBACK_DELAY_MINUTES,
   })
@@ -27,17 +26,18 @@ async function trySyncLocalStateToDrive() {
     const syncRevision = await getLocalStateRevision()
     await setSyncStatus('syncing')
     const state = await getLocalState()
-    await withToken(async (token) => {
+    const nextState = await withToken(async (token) => {
       const rootFolderId = await getRootFolderIdOrThrow()
-      await pushStateToDriveAsFolders(token, rootFolderId, state)
-      const latestRevision = await getLocalStateRevision()
-      if (latestRevision === syncRevision) {
-        await markLocalStateClean()
-        await setSyncStatus('synced')
-        return
-      }
-      await setSyncStatus('pending')
+      return pushStateToDriveAsFolders(token, rootFolderId, state)
     })
+    const latestRevision = await getLocalStateRevision()
+    if (latestRevision === syncRevision) {
+      await saveLocalState(nextState, false)
+      await markLocalStateClean()
+      await setSyncStatus('synced')
+      return
+    }
+    await setSyncStatus('pending')
   } catch {
     await setSyncStatus('error')
   } finally {

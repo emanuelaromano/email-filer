@@ -139,7 +139,6 @@ async function saveLocalMutation(state) {
     [LOCAL_STATE_REVISION_KEY]: revision + 1,
     [SYNC_STATUS_KEY]: 'pending',
   })
-  // scheduleLocalStateSync is defined in sync.js, loaded after this file.
   scheduleLocalStateSync()
 }
 

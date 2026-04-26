@@ -14,7 +14,7 @@ import SavedSnippetsList from './components/SavedSnippetsList'
 import SidebarHeader from './components/SidebarHeader'
 import Toast from './components/Toast'
 import { DRIVE_CONNECTED_KEY, PENDING_HIGHLIGHT_KEY, SYNC_STATUS_KEY } from './utils/storageKeys'
-import { applyHighlightToSnippet } from './utils/highlightSnippet'
+import { applyHighlightToSnippet, expandGmailCollapsedMessages } from './utils/highlightSnippet'
 import {
   registerSaveShortcut,
   registerToggleSidebarShortcut,
@@ -295,6 +295,9 @@ export default function SidebarApp() {
         return
       }
 
+      if (attempts < 3) {
+        expandGmailCollapsedMessages()
+      }
       const highlightCount = applyHighlightToSnippet(pending.text)
       attempts += 1
       if (highlightCount > 0 || attempts >= maxAttempts) {

@@ -135,6 +135,17 @@ function createDocumentTextIndex(textNodes: Text[]): {
   return { fullText: chunks.join(''), segments }
 }
 
+export function expandGmailCollapsedMessages(): void {
+  const messageContainers = document.querySelectorAll<HTMLElement>('[data-message-id]')
+  messageContainers.forEach((container) => {
+    const toggles = container.querySelectorAll<HTMLElement>('[aria-expanded="false"]')
+    toggles.forEach((el) => {
+      if (el.closest('[data-email-filer-extension]')) return
+      el.click()
+    })
+  })
+}
+
 export function applyHighlightToSnippet(snippetText: string): number {
   const query = snippetText.trim()
   if (!query) return 0

@@ -38,7 +38,8 @@ async function trySyncLocalStateToDrive() {
       return
     }
     await setSyncStatus('pending')
-  } catch {
+  } catch (error) {
+    console.error('[Email Filer] Drive sync failed:', error)
     await setSyncStatus('error')
   } finally {
     syncInProgress = false

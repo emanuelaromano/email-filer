@@ -32,7 +32,7 @@ export function registerToggleSidebarShortcut(onTrigger: ShortcutHandler): () =>
     if (isEditableTarget(event.target)) return
 
     const isRightArrow = event.key === 'ArrowRight'
-    if (!isRightArrow || !event.metaKey) return
+    if (!isRightArrow || (!event.metaKey && !event.ctrlKey)) return
 
     event.preventDefault()
     onTrigger()

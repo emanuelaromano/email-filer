@@ -1,9 +1,14 @@
 const DRIVE_ROOT_FOLDER_NAME = 'Email Filer'
+
+// Storage keys shared with the content script.
+// The content script cannot import from this file (different runtime environments),
+// so these values are mirrored in src/extension/utils/storageKeys.ts.
+// If you rename any key here, update that file too.
 const DRIVE_CONNECTED_KEY = 'emailFilerDriveConnected'
-const MAX_SNIPPET_TEXT_LENGTH = 10_000
-const MAX_FOLDER_NAME_LENGTH = 255
 const DRIVE_FOLDER_ID_KEY = 'emailFilerDriveFolderId'
 const SYNC_STATUS_KEY = 'emailFilerSyncStatus'
+const MAX_SNIPPET_TEXT_LENGTH = 10_000
+const MAX_FOLDER_NAME_LENGTH = 255
 const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder'
 const SNIPPET_MIME_TYPE = 'text/plain'
 const LOCAL_STATE_KEY = 'emailFilerLocalState'

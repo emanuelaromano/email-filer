@@ -4,7 +4,14 @@
   "version": "1.0.0",
   "description": "Adds a Gmail-aligned sidebar on mail.google.com",
   "permissions": ["storage", "identity"],
-  "host_permissions": ["https://www.googleapis.com/*"],
+  "host_permissions": [
+    "https://www.googleapis.com/drive/v3/*",
+    "https://www.googleapis.com/upload/drive/v3/*"
+  ],
+  "oauth2": {
+    "client_id": "983812666197-o9bpa0f2h1ctj1drmrpfqcfh2dbav87j.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.file"]
+  },
   "background": {
     "service_worker": "background.js"
   },

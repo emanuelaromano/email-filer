@@ -1,35 +1,47 @@
 const DRIVE_ROOT_FOLDER_NAME = 'Email Filer'
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
-const OAUTH_CLIENT_ID = '983812666197-3dghs41umumv5t527bcehesne233q932.apps.googleusercontent.com'
 const DRIVE_CONNECTED_KEY = 'emailFilerDriveConnected'
+const MAX_SNIPPET_TEXT_LENGTH = 10_000
+const MAX_FOLDER_NAME_LENGTH = 255
 const DRIVE_FOLDER_ID_KEY = 'emailFilerDriveFolderId'
 const SYNC_STATUS_KEY = 'emailFilerSyncStatus'
 const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder'
 const SNIPPET_MIME_TYPE = 'text/plain'
 const LOCAL_STATE_KEY = 'emailFilerLocalState'
 const LOCAL_STATE_DIRTY_KEY = 'emailFilerLocalStateDirty'
+const LOCAL_STATE_REVISION_KEY = 'emailFilerLocalStateRevision'
 const SYNC_INTERVAL_MS = 5_000
 
-function buildAuthUrl() {
-  const redirectUri = chrome.identity.getRedirectURL('oauth2')
-  const params = new URLSearchParams({
-    client_id: OAUTH_CLIENT_ID,
-    response_type: 'token',
-    redirect_uri: redirectUri,
-    scope: DRIVE_SCOPE,
-    prompt: 'consent',
+function getAuthToken(interactive) {
+  return new Promise((resolve, reject) => {
+    chrome.identity.getAuthToken({ interactive }, (token) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message))
+        return
+      }
+      if (!token) {
+        reject(new Error('No token returned.'))
+        return
+      }
+      resolve(token)
+    })
   })
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
-function parseAccessTokenFromRedirect(redirectUrl) {
-  const hash = redirectUrl.split('#')[1]
-  if (!hash) return null
-  const fragmentParams = new URLSearchParams(hash)
-  return fragmentParams.get('access_token')
+function removeCachedAuthToken(token) {
+  return new Promise((resolve) => {
+    chrome.identity.removeCachedAuthToken({ token }, resolve)
+  })
 }
 
-async function driveRequest(token, url, init = {}) {
+function driveStatusMessage(status) {
+  if (status === 401 || status === 403) return 'You don\u2019t have permission to access this file. Please reconnect Google Drive.'
+  if (status === 404) return 'The file or folder was not found in Google Drive.'
+  if (status === 429) return 'Too many requests to Google Drive. Please try again in a moment.'
+  if (status >= 500) return 'Google Drive is temporarily unavailable. Please try again shortly.'
+  return 'Something went wrong with Google Drive. Please try again.'
+}
+
+async function driveRequest(token, url, init = {}, retried = false) {
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -37,9 +49,15 @@ async function driveRequest(token, url, init = {}) {
       ...(init.headers ?? {}),
     },
   })
+  if (response.status === 401 && !retried) {
+    await removeCachedAuthToken(token)
+    const freshToken = await getAuthToken(false)
+    return driveRequest(freshToken, url, init, true)
+  }
   if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Drive API error (${response.status}): ${text}`)
+    const detail = await response.text().catch(() => '')
+    console.error(`Drive API error (${response.status}):`, detail)
+    throw new Error(driveStatusMessage(response.status))
   }
   if (response.status === 204) return null
   if ((init.method ?? 'GET').toUpperCase() === 'DELETE') return null
@@ -191,6 +209,22 @@ async function saveLocalState(state, markDirty = true) {
   })
 }
 
+async function getLocalStateRevision() {
+  const result = await chrome.storage.local.get([LOCAL_STATE_REVISION_KEY])
+  const revision = result[LOCAL_STATE_REVISION_KEY]
+  return typeof revision === 'number' && Number.isFinite(revision) ? revision : 0
+}
+
+async function saveLocalMutation(state) {
+  const revision = await getLocalStateRevision()
+  await chrome.storage.local.set({
+    [LOCAL_STATE_KEY]: sanitizeLocalState(state),
+    [LOCAL_STATE_DIRTY_KEY]: true,
+    [LOCAL_STATE_REVISION_KEY]: revision + 1,
+    [SYNC_STATUS_KEY]: 'pending',
+  })
+}
+
 async function isLocalStateDirty() {
   const result = await chrome.storage.local.get([LOCAL_STATE_DIRTY_KEY])
   return Boolean(result[LOCAL_STATE_DIRTY_KEY])
@@ -303,21 +337,11 @@ async function uploadSnippetFile(token, folderId, snippet) {
     },
   )
   return {
-    id: created.id,
+    id: snippet.id || created.id,
     text: snippet.text,
     link: snippet.link,
     createdAt: created.createdTime ?? snippet.createdAt ?? new Date().toISOString(),
   }
-}
-
-async function getStoredDriveToken() {
-  const result = await chrome.storage.local.get(['emailFilerDriveAccessToken'])
-  const token = result.emailFilerDriveAccessToken
-  return typeof token === 'string' && token ? token : null
-}
-
-async function setStoredDriveToken(token) {
-  await chrome.storage.local.set({ emailFilerDriveAccessToken: token })
 }
 
 async function getRootFolderIdOrThrow() {
@@ -330,12 +354,10 @@ async function getRootFolderIdOrThrow() {
 }
 
 async function withToken(work) {
-  const token = await getStoredDriveToken()
+  const token = await getAuthToken(false).catch(() => null)
   if (!token) {
-    await chrome.storage.local.set({
-      [DRIVE_CONNECTED_KEY]: false,
-    })
-    throw new Error('Missing Drive token. Please reconnect Google Drive.')
+    await chrome.storage.local.set({ [DRIVE_CONNECTED_KEY]: false })
+    throw new Error('Session expired. Please reconnect Google Drive.')
   }
   return work(token)
 }
@@ -388,20 +410,25 @@ async function hydrateFromDrive(token, rootFolderId) {
   return sanitizeLocalState(loaded)
 }
 
-async function clearDriveFolder(token, folderId) {
-  const items = await listChildItems(token, folderId)
-  for (const item of items) {
-    await driveRequest(token, `https://www.googleapis.com/drive/v3/files/${item.id}`, {
-      method: 'DELETE',
-    })
-  }
+async function deleteDriveItem(token, itemId) {
+  await driveRequest(token, `https://www.googleapis.com/drive/v3/files/${itemId}`, {
+    method: 'DELETE',
+  })
+}
+
+async function moveItemToFolder(token, itemId, fromFolderId, toFolderId) {
+  await driveRequest(
+    token,
+    `https://www.googleapis.com/drive/v3/files/${itemId}?addParents=${toFolderId}&removeParents=${fromFolderId}&fields=id`,
+    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+  )
 }
 
 async function pushStateToDriveAsFolders(token, rootFolderId, state) {
-  await clearDriveFolder(token, rootFolderId)
+  const STAGING_NAME = '_staging_'
   const nextSnippetsByPath = {}
 
-  const createRecursive = async (parentId, nodes, path = []) => {
+  const buildRecursive = async (parentId, nodes, path = []) => {
     const key = pathKey(path)
     const snippets = state.snippetsByPath[key] ?? []
     const uploaded = []
@@ -414,11 +441,27 @@ async function pushStateToDriveAsFolders(token, rootFolderId, state) {
 
     for (const node of nodes) {
       const createdFolder = await createFolderInParent(token, parentId, node.name)
-      await createRecursive(createdFolder.id, node.children ?? [], [...path, node.name])
+      await buildRecursive(createdFolder.id, node.children ?? [], [...path, node.name])
     }
   }
 
-  await createRecursive(rootFolderId, state.projects, [])
+  // Phase 1: build into a staging folder — old data untouched if this fails
+  const staging = await createFolderInParent(token, rootFolderId, STAGING_NAME)
+  await buildRecursive(staging.id, state.projects, [])
+
+  // Phase 2: swap — delete old children, move staging children to root
+  const oldItems = await listChildItems(token, rootFolderId)
+  for (const item of oldItems) {
+    if (item.id !== staging.id) {
+      await deleteDriveItem(token, item.id)
+    }
+  }
+  const stagingChildren = await listChildItems(token, staging.id)
+  for (const item of stagingChildren) {
+    await moveItemToFolder(token, item.id, staging.id, rootFolderId)
+  }
+  await deleteDriveItem(token, staging.id)
+
   return { projects: state.projects, snippetsByPath: nextSnippetsByPath }
 }
 
@@ -430,15 +473,20 @@ async function trySyncLocalStateToDrive() {
     if (!connectedResult[DRIVE_CONNECTED_KEY]) return
     const dirty = await isLocalStateDirty()
     if (!dirty) return
+    const syncRevision = await getLocalStateRevision()
     await setSyncStatus('syncing')
     const state = await getLocalState()
     await withToken(async (token) => {
       const rootFolderId = await getRootFolderIdOrThrow()
-      const syncedState = await pushStateToDriveAsFolders(token, rootFolderId, state)
-      await saveLocalState(syncedState, false)
-      await markLocalStateClean()
+      await pushStateToDriveAsFolders(token, rootFolderId, state)
+      const latestRevision = await getLocalStateRevision()
+      if (latestRevision === syncRevision) {
+        await markLocalStateClean()
+        await setSyncStatus('synced')
+        return
+      }
+      await setSyncStatus('pending')
     })
-    await setSyncStatus('synced')
   } catch {
     await setSyncStatus('error')
   } finally {
@@ -455,60 +503,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message?.type) return undefined
 
   if (message.type === 'emailFilerConnectDrive') {
-    if (OAUTH_CLIENT_ID === 'REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID') {
-      return respond(sendResponse, {
-        ok: false,
-        error:
-          'Google OAuth client ID is missing. Set OAUTH_CLIENT_ID in public/background.js first.',
-      })
-    }
-
-    chrome.identity.launchWebAuthFlow(
-      {
-        url: buildAuthUrl(),
-        interactive: true,
-      },
-      async (redirectUrl) => {
-        if (chrome.runtime.lastError) {
-          sendResponse({
-            ok: false,
-            error: chrome.runtime.lastError.message ?? 'Google sign-in was cancelled.',
-          })
-          return
-        }
-
-        if (!redirectUrl) {
-          sendResponse({ ok: false, error: 'No OAuth redirect URL was returned.' })
-          return
-        }
-
-        try {
-          const accessToken = parseAccessTokenFromRedirect(redirectUrl)
-          if (!accessToken) {
-            throw new Error('No access token was found in the OAuth callback.')
-          }
-
-          const driveFolderId = await ensureEmailFilerFolder(accessToken)
-          const loadedState = await hydrateFromDrive(accessToken, driveFolderId)
-          await setStoredDriveToken(accessToken)
-          await chrome.storage.local.set({
-            [DRIVE_CONNECTED_KEY]: true,
-            [DRIVE_FOLDER_ID_KEY]: driveFolderId,
-          })
-          await saveLocalState(loadedState, false)
-          await markLocalStateClean()
-          await setSyncStatus('synced')
-
-          sendResponse({ ok: true, driveFolderId })
-        } catch (error) {
-          sendResponse({
-            ok: false,
-            error: error instanceof Error ? error.message : 'Failed to connect Drive.',
-          })
-        }
-      },
-    )
-
+    void (async () => {
+      try {
+        const accessToken = await getAuthToken(true)
+        const driveFolderId = await ensureEmailFilerFolder(accessToken)
+        const loadedState = await hydrateFromDrive(accessToken, driveFolderId)
+        await chrome.storage.local.set({
+          [DRIVE_CONNECTED_KEY]: true,
+          [DRIVE_FOLDER_ID_KEY]: driveFolderId,
+          [LOCAL_STATE_REVISION_KEY]: 0,
+        })
+        await saveLocalState(loadedState, false)
+        await markLocalStateClean()
+        await setSyncStatus('synced')
+        sendResponse({ ok: true, driveFolderId })
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : 'Failed to connect Drive.',
+        })
+      }
+    })()
     return true
   }
 
@@ -528,6 +543,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const parentPath = Array.isArray(message.parentPath) ? message.parentPath : []
     const name = typeof message.name === 'string' ? message.name.trim() : ''
     if (!name) return respond(sendResponse, { ok: false, error: 'Folder name is required.' })
+    if (name.length > MAX_FOLDER_NAME_LENGTH) {
+      return respond(sendResponse, { ok: false, error: `Folder name must be ${MAX_FOLDER_NAME_LENGTH} characters or fewer.` })
+    }
 
     void getLocalState().then(async (state) => {
       const next = cloneState(state)
@@ -540,8 +558,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         throw new Error(`A folder named "${name}" already exists here.`)
       }
       siblings.push({ name, children: [] })
-      await saveLocalState(next, true)
-      await setSyncStatus('pending')
+      await saveLocalMutation(next)
       sendResponse({ ok: true })
     }).catch((error) => {
       sendResponse({
@@ -575,8 +592,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const oldPath = path
       const newPath = [...parentPath, nextName]
       next.snippetsByPath = renamePathPrefix(oldPath, newPath, next.snippetsByPath)
-      await saveLocalState(next, true)
-      await setSyncStatus('pending')
+      await saveLocalMutation(next)
       sendResponse({ ok: true })
     }).catch((error) => {
       sendResponse({
@@ -602,8 +618,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (idx < 0) throw new Error('Folder no longer exists.')
       siblings.splice(idx, 1)
       next.snippetsByPath = removePathPrefix(path, next.snippetsByPath)
-      await saveLocalState(next, true)
-      await setSyncStatus('pending')
+      await saveLocalMutation(next)
       sendResponse({ ok: true })
     }).catch((error) => {
       sendResponse({
@@ -635,6 +650,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!text || !link) {
       return respond(sendResponse, { ok: false, error: 'Snippet text and link are required.' })
     }
+    if (text.length > MAX_SNIPPET_TEXT_LENGTH) {
+      return respond(sendResponse, { ok: false, error: `Snippet text must be ${MAX_SNIPPET_TEXT_LENGTH.toLocaleString()} characters or fewer.` })
+    }
+    try {
+      const parsed = new URL(link)
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return respond(sendResponse, { ok: false, error: 'Snippet link must be an http or https URL.' })
+      }
+    } catch {
+      return respond(sendResponse, { ok: false, error: 'Snippet link is not a valid URL.' })
+    }
     void getLocalState().then(async (state) => {
       const next = cloneState(state)
       const key = pathKey(path)
@@ -645,8 +671,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         createdAt: new Date().toISOString(),
       }
       next.snippetsByPath[key] = [created, ...(next.snippetsByPath[key] ?? [])]
-      await saveLocalState(next, true)
-      await setSyncStatus('pending')
+      await saveLocalMutation(next)
       sendResponse({
         ok: true,
         snippet: created,
@@ -675,8 +700,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
       }
       if (!removed) throw new Error('Snippet not found.')
-      await saveLocalState(next, true)
-      await setSyncStatus('pending')
+      await saveLocalMutation(next)
       sendResponse({ ok: true })
     }).catch((error) => {
       sendResponse({

@@ -37,6 +37,12 @@ export default function SavedSnippetsList({
           href={item.link}
           onClick={(event) => {
             event.preventDefault()
+            try {
+              const parsed = new URL(item.link)
+              if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return
+            } catch {
+              return
+            }
             const payload = {
               text: item.text,
               createdAt: Date.now(),

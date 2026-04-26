@@ -43,11 +43,10 @@ export default function SavedSnippetsList({
             } catch {
               return
             }
-            const payload = {
-              text: item.text,
-              createdAt: Date.now(),
-            }
-            window.sessionStorage.setItem(PENDING_HIGHLIGHT_KEY, JSON.stringify(payload))
+            window.sessionStorage.setItem(
+              PENDING_HIGHLIGHT_KEY,
+              JSON.stringify({ text: item.text, createdAt: Date.now() }),
+            )
             window.location.assign(item.link)
           }}
           onContextMenu={(event) => {

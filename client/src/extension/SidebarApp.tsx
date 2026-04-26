@@ -13,11 +13,7 @@ import ProjectsToolbar from './components/ProjectsToolbar'
 import SavedSnippetsList from './components/SavedSnippetsList'
 import SidebarHeader from './components/SidebarHeader'
 import Toast from './components/Toast'
-import {
-  DRIVE_CONNECTED_KEY,
-  PENDING_HIGHLIGHT_KEY,
-  SYNC_STATUS_KEY,
-} from './storageKeys'
+import { DRIVE_CONNECTED_KEY, PENDING_HIGHLIGHT_KEY, SYNC_STATUS_KEY } from './storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
 import {
   registerSaveShortcut,
@@ -124,10 +120,6 @@ export default function SidebarApp() {
     : []
   const openedProjectLabel = openedProjectPath?.join(' - ') ?? ''
 
-  /**
-   * Save shortcut target: open folder if any, otherwise root library (Finder-style window,
-   * not the selected row highlight).
-   */
   const saveShortcutTarget = useMemo(() => {
     if (openedProjectPath) {
       return {
@@ -298,29 +290,15 @@ export default function SidebarApp() {
         return
       }
 
-      if (!pending.text) {
-        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
-        return
-      }
-
-      // expire stale highlight requests after 20 seconds
-      if (Date.now() - pending.createdAt > 20_000) {
+      if (!pending.text || Date.now() - pending.createdAt > 20_000) {
         window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
         return
       }
 
       const highlightCount = applyHighlightToSnippet(pending.text)
       attempts += 1
-      if (highlightCount > 0) {
+      if (highlightCount > 0 || attempts >= maxAttempts) {
         window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
-        setSaveStatus(
-          highlightCount === 1
-            ? 'Highlighted 1 match in email.'
-            : `Highlighted ${highlightCount} matches in email.`,
-        )
-      } else if (attempts >= maxAttempts) {
-        window.sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY)
-        setSaveStatus('Could not find that text in this email.')
       }
     }, 700)
 

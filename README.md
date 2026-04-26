@@ -4,7 +4,8 @@ A Chrome extension that lets you save highlighted text snippets from Gmail and o
 
 ## Features
 
-- Highlight text in a Gmail email and save it with one click or a keyboard shortcut
+- Highlight text in a Gmail email and save it with **Cmd+/** (Mac) / **Ctrl+/** (Windows)
+- Toggle the sidebar open/closed with **Cmd+→** (Mac) / **Ctrl+→** (Windows)
 - Organise snippets into nested folders, mirrored as real Drive folders
 - Click a saved snippet to jump back to it in the original email
 - All data lives in your own Google Drive (`drive.file` scope — no other Drive files are accessible)

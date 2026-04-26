@@ -50,7 +50,7 @@ export default function ProjectsToolbar({
             letterSpacing: '0.08em',
           }}
         >
-          {isOpenedView ? `PROJECTS - ${label}` : 'PROJECTS'}
+          {isOpenedView ? label : 'PROJECTS'}
         </Typography>
       </Box>
       <Tooltip title={addOpen ? 'Close' : 'New project'}>

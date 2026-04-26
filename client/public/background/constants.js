@@ -1,0 +1,14 @@
+const DRIVE_ROOT_FOLDER_NAME = 'Email Filer'
+const DRIVE_CONNECTED_KEY = 'emailFilerDriveConnected'
+const MAX_SNIPPET_TEXT_LENGTH = 10_000
+const MAX_FOLDER_NAME_LENGTH = 255
+const DRIVE_FOLDER_ID_KEY = 'emailFilerDriveFolderId'
+const SYNC_STATUS_KEY = 'emailFilerSyncStatus'
+const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder'
+const SNIPPET_MIME_TYPE = 'text/plain'
+const LOCAL_STATE_KEY = 'emailFilerLocalState'
+const LOCAL_STATE_DIRTY_KEY = 'emailFilerLocalStateDirty'
+const LOCAL_STATE_REVISION_KEY = 'emailFilerLocalStateRevision'
+const SYNC_DEBOUNCE_MS = 1_000
+const SYNC_ALARM_NAME = 'emailFilerSyncDebounce'
+const SYNC_ALARM_FALLBACK_DELAY_MINUTES = 1 / 2

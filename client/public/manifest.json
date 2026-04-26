@@ -3,7 +3,7 @@
   "name": "Email Filer",
   "version": "1.0.0",
   "description": "Adds a Gmail-aligned sidebar on mail.google.com",
-  "permissions": ["storage", "identity"],
+  "permissions": ["storage", "identity", "alarms"],
   "host_permissions": [
     "https://www.googleapis.com/drive/v3/*",
     "https://www.googleapis.com/upload/drive/v3/*"

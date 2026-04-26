@@ -490,7 +490,7 @@ export default function SidebarApp() {
                 <ProjectsToolbar
                   addOpen={addOpen}
                   isOpenedView={isOpenedView}
-                  label={openedProjectLabel}
+                  label={openedProjectPath?.[openedProjectPath.length - 1] ?? ''}
                   onBack={() => {
                     if (openedProjectPath) {
                       if (openedProjectPath.length > 1) {

@@ -16,6 +16,7 @@ import Toast from './components/Toast'
 import {
   DRIVE_CONNECTED_KEY,
   PENDING_HIGHLIGHT_KEY,
+  SYNC_STATUS_KEY,
 } from './storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
 import { registerSaveShortcut } from './utils/shortcuts'
@@ -79,6 +80,7 @@ function sendRuntimeMessage<T = unknown>(message: unknown): Promise<T> {
 export default function SidebarApp() {
   const [driveConnected, setDriveConnected] = useState(false)
   const [driveConnecting, setDriveConnecting] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'syncing' | 'error'>('synced')
   const [collapsed, setCollapsed] = useState(false)
   const { projects, addProject, renameProject, deleteProject } = useExtensionProjects(
     driveConnected,
@@ -165,7 +167,6 @@ export default function SidebarApp() {
         [projectKey]: (prev[projectKey] ?? []).filter((item) => item.id !== snippetId),
       }))
       await loadSnippetsForPath(path)
-      setSaveStatus('Snippet deleted.')
     } catch (error) {
       setSaveStatus(error instanceof Error ? error.message : 'Failed to delete snippet.')
     }
@@ -212,8 +213,17 @@ export default function SidebarApp() {
   }, [loadSnippetsForPath])
 
   useEffect(() => {
-    chrome.storage.local.get([DRIVE_CONNECTED_KEY], (result) => {
+    chrome.storage.local.get([DRIVE_CONNECTED_KEY, SYNC_STATUS_KEY], (result) => {
       setDriveConnected(Boolean(result[DRIVE_CONNECTED_KEY]))
+      const initialSyncStatus = result[SYNC_STATUS_KEY]
+      if (
+        initialSyncStatus === 'synced' ||
+        initialSyncStatus === 'pending' ||
+        initialSyncStatus === 'syncing' ||
+        initialSyncStatus === 'error'
+      ) {
+        setSyncStatus(initialSyncStatus)
+      }
     })
 
     const listener: Parameters<typeof chrome.storage.onChanged.addListener>[0] = (
@@ -221,8 +231,15 @@ export default function SidebarApp() {
       area,
     ) => {
       if (area !== 'local') return
-      if (!(DRIVE_CONNECTED_KEY in changes)) return
-      setDriveConnected(Boolean(changes[DRIVE_CONNECTED_KEY]?.newValue))
+      if (DRIVE_CONNECTED_KEY in changes) {
+        setDriveConnected(Boolean(changes[DRIVE_CONNECTED_KEY]?.newValue))
+      }
+      if (SYNC_STATUS_KEY in changes) {
+        const next = changes[SYNC_STATUS_KEY]?.newValue
+        if (next === 'synced' || next === 'pending' || next === 'syncing' || next === 'error') {
+          setSyncStatus(next)
+        }
+      }
     }
     chrome.storage.onChanged.addListener(listener)
     return () => chrome.storage.onChanged.removeListener(listener)
@@ -320,7 +337,6 @@ export default function SidebarApp() {
       setSelectedPath(nextPath)
       setNewName('')
       setAddOpen(false)
-      setSaveStatus('Folder created in Drive.')
     } catch (error) {
       setSaveStatus(error instanceof Error ? error.message : 'Failed to create folder.')
     }
@@ -354,7 +370,6 @@ export default function SidebarApp() {
       setRenameOpen(false)
       setRenameFromPath(null)
       setRenameName('')
-      setSaveStatus('Folder renamed in Drive.')
     } catch (error) {
       setSaveStatus(error instanceof Error ? error.message : 'Failed to rename folder.')
     }
@@ -365,7 +380,6 @@ export default function SidebarApp() {
     try {
       const removed = await deleteProject(menuProjectPath)
       if (!removed) return
-      setSaveStatus('Folder and contents deleted from Drive.')
 
       if (
         selectedPath &&
@@ -426,6 +440,7 @@ export default function SidebarApp() {
     >
       <SidebarHeader
         collapsed={collapsed}
+        syncStatus={driveConnected ? syncStatus : undefined}
         onToggleCollapsed={() => setCollapsed((c) => !c)}
       />
 

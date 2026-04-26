@@ -13,7 +13,7 @@ import ProjectsToolbar from './components/ProjectsToolbar'
 import SavedSnippetsList from './components/SavedSnippetsList'
 import SidebarHeader from './components/SidebarHeader'
 import Toast from './components/Toast'
-import { DRIVE_CONNECTED_KEY, PENDING_HIGHLIGHT_KEY, SYNC_STATUS_KEY } from './storageKeys'
+import { DRIVE_CONNECTED_KEY, PENDING_HIGHLIGHT_KEY, SYNC_STATUS_KEY } from './utils/storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
 import {
   registerSaveShortcut,
@@ -22,7 +22,7 @@ import {
 import {
   getNodeAtPath,
   useExtensionProjects,
-} from './useExtensionProjects'
+} from './utils/useExtensionProjects'
 
 const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48

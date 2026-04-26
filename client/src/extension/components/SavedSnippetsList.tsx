@@ -1,6 +1,6 @@
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import { PENDING_HIGHLIGHT_KEY } from '../storageKeys'
+import { PENDING_HIGHLIGHT_KEY } from '../utils/storageKeys'
 
 type SavedSnippet = {
   id: string

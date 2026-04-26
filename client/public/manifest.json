@@ -9,7 +9,15 @@
     "128": "icons/icon-128.png",
     "512": "icons/icon-512.png"
   },
-  "permissions": ["storage", "identity", "alarms"],
+  "action": {
+    "default_title": "Email Filer — open Gmail to use",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "permissions": ["storage", "identity", "alarms", "tabs"],
   "host_permissions": [
     "https://www.googleapis.com/drive/v3/*",
     "https://www.googleapis.com/upload/drive/v3/*"

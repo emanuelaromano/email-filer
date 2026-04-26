@@ -2,6 +2,15 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { PENDING_HIGHLIGHT_KEY } from '../utils/storageKeys'
 
+function getSafeHref(link: string): string | undefined {
+  try {
+    const { protocol } = new URL(link)
+    return protocol === 'https:' || protocol === 'http:' ? link : undefined
+  } catch {
+    return undefined
+  }
+}
+
 type SavedSnippet = {
   id: string
   text: string
@@ -34,20 +43,16 @@ export default function SavedSnippetsList({
         <Box
           key={item.id}
           component="a"
-          href={item.link}
+          href={getSafeHref(item.link)}
           onClick={(event) => {
             event.preventDefault()
-            try {
-              const parsed = new URL(item.link)
-              if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return
-            } catch {
-              return
-            }
+            const safeHref = getSafeHref(item.link)
+            if (!safeHref) return
             window.sessionStorage.setItem(
               PENDING_HIGHLIGHT_KEY,
               JSON.stringify({ text: item.text, createdAt: Date.now() }),
             )
-            window.location.assign(item.link)
+            window.location.assign(safeHref)
           }}
           onContextMenu={(event) => {
             event.preventDefault()

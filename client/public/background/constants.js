@@ -18,4 +18,4 @@ const DRIVE_SYNCED_STATE_KEY = 'emailFilerDriveSyncedState'
 const DRIVE_FOLDER_MAP_KEY = 'emailFilerDriveFolderMap'
 const SYNC_DEBOUNCE_MS = 1_000
 const SYNC_ALARM_NAME = 'emailFilerSyncDebounce'
-const SYNC_ALARM_FALLBACK_DELAY_MINUTES = 1 / 2
+const SYNC_ALARM_FALLBACK_DELAY_MINUTES = 1

@@ -21,6 +21,12 @@ function sanitizeSnippet(value) {
   const text = typeof value.text === 'string' ? value.text.trim() : ''
   const link = typeof value.link === 'string' ? value.link.trim() : ''
   if (!text || !link) return null
+  try {
+    const { protocol } = new URL(link)
+    if (protocol !== 'https:' && protocol !== 'http:') return null
+  } catch {
+    return null
+  }
   const id =
     typeof value.id === 'string' && value.id
       ? value.id

@@ -66,9 +66,18 @@ async function getFileText(token, fileId) {
 
 async function listChildItems(token, parentId) {
   const query = encodeURIComponent(`'${parentId}' in parents and trashed=false`)
-  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id,name,mimeType,createdTime)&orderBy=name_natural`
-  const result = await driveRequest(token, url)
-  return Array.isArray(result?.files) ? result.files : []
+  const baseUrl =
+    `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive` +
+    `&fields=files(id,name,mimeType,createdTime),nextPageToken&orderBy=name_natural&pageSize=1000`
+  const allFiles = []
+  let pageToken = null
+  do {
+    const url = pageToken ? `${baseUrl}&pageToken=${encodeURIComponent(pageToken)}` : baseUrl
+    const result = await driveRequest(token, url)
+    if (Array.isArray(result?.files)) allFiles.push(...result.files)
+    pageToken = result?.nextPageToken ?? null
+  } while (pageToken)
+  return allFiles
 }
 
 async function createFolderInParent(token, parentId, name) {

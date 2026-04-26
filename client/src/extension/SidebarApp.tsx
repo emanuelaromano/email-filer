@@ -31,7 +31,7 @@ import {
 const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48
 const ROOT_SNIPPETS_KEY = '__root__'
-const ROOT_SNIPPETS_LABEL = 'Library'
+const ROOT_SNIPPETS_LABEL = 'Root folder'
 
 type SavedItem = {
   id: string

@@ -171,10 +171,10 @@ export function applyHighlightToSnippet(snippetText: string): number {
     ranges.length > 0 ? ranges : findRangesByWordSequence(fullText, query),
   )
   if (finalRanges.length === 0) return 0
+  const logicalMatchCount = finalRanges.length
 
   clearExistingHighlightMarks()
   let firstMark: Element | null = null
-  let matchCount = 0
 
   for (const segment of segments) {
     const source = segment.node.textContent ?? ''
@@ -206,7 +206,6 @@ export function applyHighlightToSnippet(snippetText: string): number {
       mark.textContent = source.slice(start, end)
       fragment.appendChild(mark)
       if (!firstMark) firstMark = mark
-      matchCount += 1
       localCursor = end
     }
 
@@ -220,5 +219,5 @@ export function applyHighlightToSnippet(snippetText: string): number {
   if (firstMark !== null) {
     firstMark.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }
-  return matchCount
+  return firstMark ? logicalMatchCount : 0
 }

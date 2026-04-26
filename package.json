@@ -3,6 +3,7 @@
     "deps": "npm install && cd client && npm install",
     "build:extension": "cd client && npm run build",
     "git": "git add . && git commit -m \"update\" && git push",
-    "zip": "rm -f email-filer.zip && zip -r email-filer.zip client/dist"
+    "zip": "rm -f email-filer.zip && zip -r email-filer.zip client/dist",
+    "git:zip": "npm run git && npm run zip"
   }
 }

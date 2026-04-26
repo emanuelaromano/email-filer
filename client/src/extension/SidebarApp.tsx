@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
 import AddToDriveOutlinedIcon from '@mui/icons-material/AddToDriveOutlined'
 import Box from '@mui/material/Box'
@@ -80,9 +80,14 @@ export default function SidebarApp() {
   const [driveConnected, setDriveConnected] = useState(false)
   const [driveConnecting, setDriveConnecting] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const { projects, addProject, renameProject, deleteProject } = useExtensionProjects(
-    driveConnected,
-  )
+  const {
+    projects,
+    addProject,
+    renameProject,
+    deleteProject,
+    hasPendingSync,
+    lastSyncError,
+  } = useExtensionProjects(driveConnected)
   const [selectedPath, setSelectedPath] = useState<ProjectPath | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -103,6 +108,19 @@ export default function SidebarApp() {
     Record<string, SavedItem[]>
   >({})
   const [openedProjectPath, setOpenedProjectPath] = useState<ProjectPath | null>(null)
+  const snippetQueueRef = useRef<
+    Array<
+      | {
+          type: 'save'
+          localId: string
+          path: ProjectPath | null
+          text: string
+          link: string
+        }
+      | { type: 'delete'; snippetId: string; path: ProjectPath | null }
+    >
+  >([])
+  const snippetFlushingRef = useRef(false)
 
   const openedProjectNode = useMemo(
     () => (openedProjectPath ? getNodeAtPath(projects, openedProjectPath) : null),
@@ -152,24 +170,72 @@ export default function SidebarApp() {
     projectKey: string,
     path: ProjectPath | null,
   ) => {
-    try {
-      const response = await sendRuntimeMessage<RuntimeResponse>({
-        type: 'emailFilerDeleteSnippet',
-        snippetId,
-      })
-      if (!response?.ok) {
-        throw new Error(response?.error ?? 'Failed to delete snippet.')
-      }
-      setSavedItemsByProject((prev) => ({
-        ...prev,
-        [projectKey]: (prev[projectKey] ?? []).filter((item) => item.id !== snippetId),
-      }))
-      await loadSnippetsForPath(path)
-      setSaveStatus('Snippet deleted.')
-    } catch (error) {
-      setSaveStatus(error instanceof Error ? error.message : 'Failed to delete snippet.')
+    if (snippetId.startsWith('local-')) {
+      snippetQueueRef.current = snippetQueueRef.current.filter(
+        (op) => !(op.type === 'save' && op.localId === snippetId),
+      )
+    } else {
+      snippetQueueRef.current.push({ type: 'delete', snippetId, path })
     }
+    setSavedItemsByProject((prev) => ({
+      ...prev,
+      [projectKey]: (prev[projectKey] ?? []).filter((item) => item.id !== snippetId),
+    }))
+    setSaveStatus('Snippet queued. Syncing to Drive...')
   }
+
+  const flushSnippetQueue = useCallback(async () => {
+    if (!driveConnected) return
+    if (snippetFlushingRef.current) return
+    if (snippetQueueRef.current.length === 0) return
+    snippetFlushingRef.current = true
+    const batch = snippetQueueRef.current.splice(0, snippetQueueRef.current.length)
+    try {
+      for (let index = 0; index < batch.length; index += 1) {
+        const op = batch[index]
+        if (op.type === 'save') {
+          const response = await sendRuntimeMessage<
+            RuntimeResponse<{ snippet?: SavedItem }>
+          >({
+            type: 'emailFilerSaveSnippet',
+            path: op.path ?? [],
+            text: op.text,
+            link: op.link,
+          })
+          if (!response?.ok) {
+            const remaining = batch.slice(index)
+            snippetQueueRef.current = [...remaining, ...snippetQueueRef.current]
+            throw new Error(response?.error ?? 'Failed to sync snippet.')
+          }
+          const created = response.snippet
+          if (created) {
+            const key = op.path ? getProjectStorageKey(op.path) : ROOT_SNIPPETS_KEY
+            setSavedItemsByProject((prev) => ({
+              ...prev,
+              [key]: (prev[key] ?? []).map((item) =>
+                item.id === op.localId ? { ...created } : item,
+              ),
+            }))
+          }
+        } else {
+          const response = await sendRuntimeMessage<RuntimeResponse>({
+            type: 'emailFilerDeleteSnippet',
+            snippetId: op.snippetId,
+          })
+          if (!response?.ok) {
+            const remaining = batch.slice(index)
+            snippetQueueRef.current = [...remaining, ...snippetQueueRef.current]
+            throw new Error(response?.error ?? 'Failed to sync snippet delete.')
+          }
+        }
+      }
+      setSaveStatus('All changes synced to Drive.')
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? error.message : 'Drive sync pending.')
+    } finally {
+      snippetFlushingRef.current = false
+    }
+  }, [driveConnected])
 
   const saveHighlightedSelection = useCallback(async (
     path: ProjectPath | null,
@@ -183,33 +249,29 @@ export default function SidebarApp() {
 
     const link = window.location.href
     try {
-      const response = await sendRuntimeMessage<
-        RuntimeResponse<{ snippet?: SavedItem }>
-      >({
-        type: 'emailFilerSaveSnippet',
-        path: path ?? [],
+      const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const localItem: SavedItem = {
+        id: localId,
+        text: selection,
+        link,
+        createdAt: new Date().toISOString(),
+      }
+      setSavedItemsByProject((prev) => ({
+        ...prev,
+        [projectKey]: [localItem, ...(prev[projectKey] ?? [])],
+      }))
+      snippetQueueRef.current.push({
+        type: 'save',
+        localId,
+        path,
         text: selection,
         link,
       })
-      if (!response?.ok) {
-        return { ok: false, message: response?.error ?? 'Failed to save snippet.' }
-      }
-      const created = response.snippet
-      if (created) {
-        setSavedItemsByProject((prev) => ({
-          ...prev,
-          [projectKey]: [created, ...(prev[projectKey] ?? [])],
-        }))
-      }
-      await loadSnippetsForPath(path)
-      return { ok: true, message: `Saved to ${projectLabel}.` }
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof Error ? error.message : 'Failed to save snippet.',
-      }
+      return { ok: true, message: `Saved to ${projectLabel}. Syncing to Drive...` }
+    } catch {
+      return { ok: false, message: 'Failed to save snippet locally.' }
     }
-  }, [loadSnippetsForPath])
+  }, [])
 
   useEffect(() => {
     chrome.storage.local.get([DRIVE_CONNECTED_KEY], (result) => {
@@ -243,6 +305,24 @@ export default function SidebarApp() {
       setSaveStatus(error instanceof Error ? error.message : 'Failed to load snippets.')
     })
   }, [driveConnected, loadSnippetsForPath, openedProjectPath, projects])
+
+  useEffect(() => {
+    if (!driveConnected) return
+    const timer = window.setInterval(() => {
+      void flushSnippetQueue()
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [driveConnected, flushSnippetQueue])
+
+  useEffect(() => {
+    if (lastSyncError) {
+      setSaveStatus(lastSyncError)
+      return
+    }
+    if (hasPendingSync || snippetQueueRef.current.length > 0) {
+      setSaveStatus('Syncing changes to Drive...')
+    }
+  }, [hasPendingSync, lastSyncError])
 
   useEffect(() => {
     return registerSaveShortcut(() => {
@@ -307,23 +387,19 @@ export default function SidebarApp() {
     return () => window.clearTimeout(timer)
   }, [saveStatus])
 
-  const handleAddSubmit = async () => {
+  const handleAddSubmit = () => {
     const trimmed = newName.trim()
     if (!trimmed) return
     const parentPath = openedProjectPath ?? []
     const siblings = openedProjectPath ? openedProjectChildren : rootProjects
     if (siblings.some((node) => node.name === trimmed)) return
-    try {
-      const added = await addProject(trimmed, parentPath)
-      if (!added) return
-      const nextPath = [...parentPath, trimmed]
-      setSelectedPath(nextPath)
-      setNewName('')
-      setAddOpen(false)
-      setSaveStatus('Folder created in Drive.')
-    } catch (error) {
-      setSaveStatus(error instanceof Error ? error.message : 'Failed to create folder.')
-    }
+    const added = addProject(trimmed, parentPath)
+    if (!added) return
+    const nextPath = [...parentPath, trimmed]
+    setSelectedPath(nextPath)
+    setNewName('')
+    setAddOpen(false)
+    setSaveStatus('Folder queued. Syncing to Drive...')
   }
 
   const closeContextMenu = () => {
@@ -337,53 +413,45 @@ export default function SidebarApp() {
     setSnippetMenuPos(null)
   }
 
-  const handleRenameSubmit = async () => {
+  const handleRenameSubmit = () => {
     const trimmed = renameName.trim()
     if (!renameFromPath || !trimmed) return
     const currentName = renameFromPath[renameFromPath.length - 1] ?? ''
     if (trimmed === currentName) return
-    try {
-      const renamed = await renameProject(renameFromPath, trimmed)
-      if (!renamed) return
-      if (isSamePath(selectedPath, renameFromPath)) {
-        setSelectedPath([...renameFromPath.slice(0, -1), trimmed])
-      }
-      if (isSamePath(openedProjectPath, renameFromPath)) {
-        setOpenedProjectPath([...renameFromPath.slice(0, -1), trimmed])
-      }
-      setRenameOpen(false)
-      setRenameFromPath(null)
-      setRenameName('')
-      setSaveStatus('Folder renamed in Drive.')
-    } catch (error) {
-      setSaveStatus(error instanceof Error ? error.message : 'Failed to rename folder.')
+    const renamed = renameProject(renameFromPath, trimmed)
+    if (!renamed) return
+    if (isSamePath(selectedPath, renameFromPath)) {
+      setSelectedPath([...renameFromPath.slice(0, -1), trimmed])
     }
+    if (isSamePath(openedProjectPath, renameFromPath)) {
+      setOpenedProjectPath([...renameFromPath.slice(0, -1), trimmed])
+    }
+    setRenameOpen(false)
+    setRenameFromPath(null)
+    setRenameName('')
+    setSaveStatus('Folder rename queued. Syncing to Drive...')
   }
 
-  const handleDeleteProject = async () => {
+  const handleDeleteProject = () => {
     if (!menuProjectPath) return
-    try {
-      const removed = await deleteProject(menuProjectPath)
-      if (!removed) return
-      setSaveStatus('Folder and contents deleted from Drive.')
+    const removed = deleteProject(menuProjectPath)
+    if (!removed) return
+    setSaveStatus('Folder deletion queued. Syncing to Drive...')
 
-      if (
-        selectedPath &&
-        selectedPath.length >= menuProjectPath.length &&
-        menuProjectPath.every((part, index) => selectedPath[index] === part)
-      ) {
-        setSelectedPath(null)
-      }
-      if (
-        openedProjectPath &&
-        openedProjectPath.length >= menuProjectPath.length &&
-        menuProjectPath.every((part, index) => openedProjectPath[index] === part)
-      ) {
-        const parentPath = menuProjectPath.slice(0, -1)
-        setOpenedProjectPath(parentPath.length > 0 ? parentPath : null)
-      }
-    } catch (error) {
-      setSaveStatus(error instanceof Error ? error.message : 'Failed to delete folder.')
+    if (
+      selectedPath &&
+      selectedPath.length >= menuProjectPath.length &&
+      menuProjectPath.every((part, index) => selectedPath[index] === part)
+    ) {
+      setSelectedPath(null)
+    }
+    if (
+      openedProjectPath &&
+      openedProjectPath.length >= menuProjectPath.length &&
+      menuProjectPath.every((part, index) => openedProjectPath[index] === part)
+    ) {
+      const parentPath = menuProjectPath.slice(0, -1)
+      setOpenedProjectPath(parentPath.length > 0 ? parentPath : null)
     }
     closeContextMenu()
   }

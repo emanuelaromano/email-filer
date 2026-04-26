@@ -411,6 +411,22 @@ export default function SidebarApp() {
     closeContextMenu()
   }
 
+  const handleDisconnectDrive = () => {
+    chrome.runtime.sendMessage(
+      { type: 'emailFilerDisconnectDrive' },
+      (response?: { ok?: boolean; error?: string }) => {
+        if (chrome.runtime.lastError || !response?.ok) {
+          setSaveStatus(response?.error ?? 'Failed to disconnect Drive.')
+          return
+        }
+        setDriveConnected(false)
+        setSavedItemsByProject({})
+        setOpenedProjectPath(null)
+        setSelectedPath(null)
+      },
+    )
+  }
+
   const handleConnectGoogleDrive = () => {
     if (driveConnecting) return
     setDriveConnecting(true)
@@ -451,6 +467,7 @@ export default function SidebarApp() {
         collapsed={collapsed}
         syncStatus={driveConnected ? syncStatus : undefined}
         onToggleCollapsed={() => setCollapsed((c) => !c)}
+        onDisconnectDrive={driveConnected ? handleDisconnectDrive : undefined}
       />
 
       {!collapsed && (

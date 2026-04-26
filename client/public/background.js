@@ -527,6 +527,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
 
+  if (message.type === 'emailFilerDisconnectDrive') {
+    void (async () => {
+      try {
+        const token = await getAuthToken(false).catch(() => null)
+        if (token) await removeCachedAuthToken(token)
+        await chrome.storage.local.remove([
+          DRIVE_CONNECTED_KEY,
+          DRIVE_FOLDER_ID_KEY,
+          LOCAL_STATE_KEY,
+          LOCAL_STATE_DIRTY_KEY,
+          LOCAL_STATE_REVISION_KEY,
+          SYNC_STATUS_KEY,
+        ])
+        sendResponse({ ok: true })
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : 'Failed to disconnect Drive.',
+        })
+      }
+    })()
+    return true
+  }
+
   if (message.type === 'emailFilerGetProjectsTree') {
     void getLocalState().then((state) => {
       sendResponse({ ok: true, projects: state.projects })

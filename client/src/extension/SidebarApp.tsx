@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
+import AddToDriveOutlinedIcon from '@mui/icons-material/AddToDriveOutlined'
 import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
+import Typography from '@mui/material/Typography'
 import FolderButton from './components/FolderButton'
 import ProjectInlineForm from './components/ProjectInlineForm'
 import ProjectRenameInlineForm from './components/ProjectRenameInlineForm'
@@ -10,18 +13,19 @@ import ProjectsToolbar from './components/ProjectsToolbar'
 import SavedSnippetsList from './components/SavedSnippetsList'
 import SidebarHeader from './components/SidebarHeader'
 import Toast from './components/Toast'
-import { PENDING_HIGHLIGHT_KEY } from './storageKeys'
+import {
+  DRIVE_CONNECTED_KEY,
+  PENDING_HIGHLIGHT_KEY,
+} from './storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
 import { registerSaveShortcut } from './utils/shortcuts'
 import {
   getNodeAtPath,
-  type ProjectNode,
   useExtensionProjects,
 } from './useExtensionProjects'
 
 const SIDEBAR_WIDTH = 320
 const SIDEBAR_WIDTH_COLLAPSED = 48
-const SAVED_ITEMS_KEY = 'emailFilerProjectSavedItems'
 const ROOT_SNIPPETS_KEY = '__root__'
 const ROOT_SNIPPETS_LABEL = 'Library'
 
@@ -36,6 +40,11 @@ type SaveResult = {
   ok: boolean
   message: string
 }
+
+type RuntimeResponse<T = unknown> = {
+  ok?: boolean
+  error?: string
+} & T
 
 type PendingHighlight = {
   text: string
@@ -55,20 +64,25 @@ function getProjectStorageKey(path: ProjectPath): string {
   return JSON.stringify(path)
 }
 
-function collectProjectStorageKeys(
-  path: ProjectPath,
-  node: ProjectNode,
-): string[] {
-  const keys = [getProjectStorageKey(path)]
-  for (const child of node.children) {
-    keys.push(...collectProjectStorageKeys([...path, child.name], child))
-  }
-  return keys
+function sendRuntimeMessage<T = unknown>(message: unknown): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message))
+        return
+      }
+      resolve(response as T)
+    })
+  })
 }
 
 export default function SidebarApp() {
+  const [driveConnected, setDriveConnected] = useState(false)
+  const [driveConnecting, setDriveConnecting] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const { projects, addProject, renameProject, deleteProject } = useExtensionProjects()
+  const { projects, addProject, renameProject, deleteProject } = useExtensionProjects(
+    driveConnected,
+  )
   const [selectedPath, setSelectedPath] = useState<ProjectPath | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -80,7 +94,7 @@ export default function SidebarApp() {
     null,
   )
   const [snippetMenuItemId, setSnippetMenuItemId] = useState<string | null>(null)
-  const [snippetMenuStorageKey, setSnippetMenuStorageKey] = useState<string | null>(null)
+  const [snippetMenuPath, setSnippetMenuPath] = useState<ProjectPath | null>(null)
   const [snippetMenuPos, setSnippetMenuPos] = useState<{ top: number; left: number } | null>(
     null,
   )
@@ -119,74 +133,128 @@ export default function SidebarApp() {
     return { projectKey: ROOT_SNIPPETS_KEY, projectLabel: ROOT_SNIPPETS_LABEL }
   }, [openedProjectPath, openedProjectLabel])
 
-  const handleDeleteSavedSnippet = (snippetId: string, projectKey: string) => {
-    chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
-      const byProject =
-        (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
-      const existing = Array.isArray(byProject[projectKey]) ? byProject[projectKey] : []
-      const nextItems = existing.filter((item) => item.id !== snippetId)
-      const next = {
-        ...byProject,
-        [projectKey]: nextItems,
-      }
-
-      setSavedItemsByProject(next)
-      void chrome.storage.local.set({ [SAVED_ITEMS_KEY]: next })
-      setSaveStatus('Snippet deleted.')
+  const loadSnippetsForPath = useCallback(async (path: ProjectPath | null) => {
+    const response = await sendRuntimeMessage<
+      RuntimeResponse<{ snippets?: SavedItem[] }>
+    >({
+      type: 'emailFilerListSnippets',
+      path: path ?? [],
     })
+    if (!response?.ok) {
+      throw new Error(response?.error ?? 'Failed to load snippets from Drive.')
+    }
+    const key = path ? getProjectStorageKey(path) : ROOT_SNIPPETS_KEY
+    setSavedItemsByProject((prev) => ({ ...prev, [key]: response.snippets ?? [] }))
+  }, [])
+
+  const handleDeleteSavedSnippet = async (
+    snippetId: string,
+    projectKey: string,
+    path: ProjectPath | null,
+  ) => {
+    try {
+      const response = await sendRuntimeMessage<RuntimeResponse>({
+        type: 'emailFilerDeleteSnippet',
+        snippetId,
+      })
+      if (!response?.ok) {
+        throw new Error(response?.error ?? 'Failed to delete snippet.')
+      }
+      setSavedItemsByProject((prev) => ({
+        ...prev,
+        [projectKey]: (prev[projectKey] ?? []).filter((item) => item.id !== snippetId),
+      }))
+      await loadSnippetsForPath(path)
+      setSaveStatus('Snippet deleted.')
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to delete snippet.')
+    }
   }
 
-  const saveHighlightedSelection = (
+  const saveHighlightedSelection = useCallback(async (
+    path: ProjectPath | null,
     projectKey: string,
     projectLabel: string,
-  ): SaveResult => {
+  ): Promise<SaveResult> => {
     const selection = window.getSelection()?.toString() ?? ''
     if (!selection.trim()) {
       return { ok: false, message: 'Highlight text in an email first.' }
     }
 
     const link = window.location.href
-    const item: SavedItem = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text: selection,
-      link,
-      createdAt: new Date().toISOString(),
-    }
-
-    chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
-      const byProject =
-        (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
-      const existing = Array.isArray(byProject[projectKey])
-        ? byProject[projectKey]
-        : []
-      const next = {
-        ...byProject,
-        [projectKey]: [item, ...existing],
+    try {
+      const response = await sendRuntimeMessage<
+        RuntimeResponse<{ snippet?: SavedItem }>
+      >({
+        type: 'emailFilerSaveSnippet',
+        path: path ?? [],
+        text: selection,
+        link,
+      })
+      if (!response?.ok) {
+        return { ok: false, message: response?.error ?? 'Failed to save snippet.' }
       }
-      setSavedItemsByProject(next)
-      void chrome.storage.local.set({ [SAVED_ITEMS_KEY]: next })
-    })
-
-    return { ok: true, message: `Saved to ${projectLabel}.` }
-  }
+      const created = response.snippet
+      if (created) {
+        setSavedItemsByProject((prev) => ({
+          ...prev,
+          [projectKey]: [created, ...(prev[projectKey] ?? [])],
+        }))
+      }
+      await loadSnippetsForPath(path)
+      return { ok: true, message: `Saved to ${projectLabel}.` }
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Failed to save snippet.',
+      }
+    }
+  }, [loadSnippetsForPath])
 
   useEffect(() => {
-    chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
-      const byProject =
-        (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
-      setSavedItemsByProject(byProject)
+    chrome.storage.local.get([DRIVE_CONNECTED_KEY], (result) => {
+      setDriveConnected(Boolean(result[DRIVE_CONNECTED_KEY]))
     })
+
+    const listener: Parameters<typeof chrome.storage.onChanged.addListener>[0] = (
+      changes,
+      area,
+    ) => {
+      if (area !== 'local') return
+      if (!(DRIVE_CONNECTED_KEY in changes)) return
+      setDriveConnected(Boolean(changes[DRIVE_CONNECTED_KEY]?.newValue))
+    }
+    chrome.storage.onChanged.addListener(listener)
+    return () => chrome.storage.onChanged.removeListener(listener)
   }, [])
 
   useEffect(() => {
+    if (!driveConnected) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadSnippetsForPath(null).catch((error) => {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to load snippets.')
+    })
+  }, [driveConnected, loadSnippetsForPath])
+
+  useEffect(() => {
+    if (!driveConnected || !openedProjectPath) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadSnippetsForPath(openedProjectPath).catch((error) => {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to load snippets.')
+    })
+  }, [driveConnected, loadSnippetsForPath, openedProjectPath, projects])
+
+  useEffect(() => {
     return registerSaveShortcut(() => {
-      const result = saveHighlightedSelection(
+      void saveHighlightedSelection(
+        openedProjectPath,
         saveShortcutTarget.projectKey,
         saveShortcutTarget.projectLabel,
-      )
-      setSaveStatus(result.message)
+      ).then((result) => {
+        setSaveStatus(result.message)
+      })
     })
-  }, [saveShortcutTarget])
+  }, [openedProjectPath, saveHighlightedSelection, saveShortcutTarget])
 
   useEffect(() => {
     let attempts = 0
@@ -239,17 +307,23 @@ export default function SidebarApp() {
     return () => window.clearTimeout(timer)
   }, [saveStatus])
 
-  const handleAddSubmit = () => {
+  const handleAddSubmit = async () => {
     const trimmed = newName.trim()
     if (!trimmed) return
     const parentPath = openedProjectPath ?? []
     const siblings = openedProjectPath ? openedProjectChildren : rootProjects
     if (siblings.some((node) => node.name === trimmed)) return
-    addProject(trimmed, parentPath)
-    const nextPath = [...parentPath, trimmed]
-    setSelectedPath(nextPath)
-    setNewName('')
-    setAddOpen(false)
+    try {
+      const added = await addProject(trimmed, parentPath)
+      if (!added) return
+      const nextPath = [...parentPath, trimmed]
+      setSelectedPath(nextPath)
+      setNewName('')
+      setAddOpen(false)
+      setSaveStatus('Folder created in Drive.')
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to create folder.')
+    }
   }
 
   const closeContextMenu = () => {
@@ -259,72 +333,80 @@ export default function SidebarApp() {
 
   const closeSnippetContextMenu = () => {
     setSnippetMenuItemId(null)
-    setSnippetMenuStorageKey(null)
+    setSnippetMenuPath(null)
     setSnippetMenuPos(null)
   }
 
-  const handleRenameSubmit = () => {
+  const handleRenameSubmit = async () => {
     const trimmed = renameName.trim()
     if (!renameFromPath || !trimmed) return
     const currentName = renameFromPath[renameFromPath.length - 1] ?? ''
     if (trimmed === currentName) return
-    const renamed = renameProject(renameFromPath, trimmed)
-    if (renamed && isSamePath(selectedPath, renameFromPath)) {
-      setSelectedPath([...renameFromPath.slice(0, -1), trimmed])
+    try {
+      const renamed = await renameProject(renameFromPath, trimmed)
+      if (!renamed) return
+      if (isSamePath(selectedPath, renameFromPath)) {
+        setSelectedPath([...renameFromPath.slice(0, -1), trimmed])
+      }
+      if (isSamePath(openedProjectPath, renameFromPath)) {
+        setOpenedProjectPath([...renameFromPath.slice(0, -1), trimmed])
+      }
+      setRenameOpen(false)
+      setRenameFromPath(null)
+      setRenameName('')
+      setSaveStatus('Folder renamed in Drive.')
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to rename folder.')
     }
-    if (renamed && isSamePath(openedProjectPath, renameFromPath)) {
-      setOpenedProjectPath([...renameFromPath.slice(0, -1), trimmed])
-    }
-    setRenameOpen(false)
-    setRenameFromPath(null)
-    setRenameName('')
   }
 
-  const handleDeleteProject = () => {
+  const handleDeleteProject = async () => {
     if (!menuProjectPath) return
-    const nodeToDelete = getNodeAtPath(projects, menuProjectPath)
-    const storageKeysToDelete = nodeToDelete
-      ? collectProjectStorageKeys(menuProjectPath, nodeToDelete)
-      : [getProjectStorageKey(menuProjectPath)]
+    try {
+      const removed = await deleteProject(menuProjectPath)
+      if (!removed) return
+      setSaveStatus('Folder and contents deleted from Drive.')
 
-    const removed = deleteProject(menuProjectPath)
-    if (removed) {
-      chrome.storage.local.get([SAVED_ITEMS_KEY], (result) => {
-        const byProject =
-          (result[SAVED_ITEMS_KEY] as Record<string, SavedItem[]>) ?? {}
-        let changed = false
-        const next = { ...byProject }
-        for (const key of storageKeysToDelete) {
-          if (key in next) {
-            delete next[key]
-            changed = true
-          }
-        }
-        if (!changed) return
-        setSavedItemsByProject(next)
-        void chrome.storage.local.set({ [SAVED_ITEMS_KEY]: next })
-      })
-      setSaveStatus('Folder and contents deleted.')
-    }
-
-    if (
-      removed &&
-      selectedPath &&
-      selectedPath.length >= menuProjectPath.length &&
-      menuProjectPath.every((part, index) => selectedPath[index] === part)
-    ) {
-      setSelectedPath(null)
-    }
-    if (
-      removed &&
-      openedProjectPath &&
-      openedProjectPath.length >= menuProjectPath.length &&
-      menuProjectPath.every((part, index) => openedProjectPath[index] === part)
-    ) {
-      const parentPath = menuProjectPath.slice(0, -1)
-      setOpenedProjectPath(parentPath.length > 0 ? parentPath : null)
+      if (
+        selectedPath &&
+        selectedPath.length >= menuProjectPath.length &&
+        menuProjectPath.every((part, index) => selectedPath[index] === part)
+      ) {
+        setSelectedPath(null)
+      }
+      if (
+        openedProjectPath &&
+        openedProjectPath.length >= menuProjectPath.length &&
+        menuProjectPath.every((part, index) => openedProjectPath[index] === part)
+      ) {
+        const parentPath = menuProjectPath.slice(0, -1)
+        setOpenedProjectPath(parentPath.length > 0 ? parentPath : null)
+      }
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? error.message : 'Failed to delete folder.')
     }
     closeContextMenu()
+  }
+
+  const handleConnectGoogleDrive = () => {
+    if (driveConnecting) return
+    setDriveConnecting(true)
+    chrome.runtime.sendMessage(
+      { type: 'emailFilerConnectDrive' },
+      (response?: { ok?: boolean; error?: string }) => {
+        setDriveConnecting(false)
+        if (chrome.runtime.lastError) {
+          setSaveStatus(chrome.runtime.lastError.message ?? 'Failed to connect Drive.')
+          return
+        }
+        if (!response?.ok) {
+          setSaveStatus(response?.error ?? 'Failed to connect Drive.')
+          return
+        }
+        setDriveConnected(true)
+        setSaveStatus('Google Drive connected.')
+      },
+    )
   }
 
   return (
@@ -350,174 +432,211 @@ export default function SidebarApp() {
       {!collapsed && (
         <>
           <Box sx={{ px: 1.5, pt: 2, pb: 1, flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <ProjectsToolbar
-              addOpen={addOpen}
-              isOpenedView={isOpenedView}
-              label={openedProjectLabel}
-              onBack={() => {
-                if (openedProjectPath) {
-                  if (openedProjectPath.length > 1) {
-                    setOpenedProjectPath(openedProjectPath.slice(0, -1))
-                  } else {
-                    setOpenedProjectPath(null)
-                  }
-                  return
-                }
-              }}
-              onToggleAdd={() => {
-                if (addOpen) {
-                  setAddOpen(false)
-                } else {
-                  setNewName('')
-                  setAddOpen(true)
-                }
-              }}
-            />
-            {!isOpenedView ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-              {addOpen && (
-                <ProjectInlineForm
-                  value={newName}
-                  placeholder="New project"
-                  submitAriaLabel="Save new project"
-                  cancelAriaLabel="Cancel new project"
-                  onChange={setNewName}
-                  onCancel={() => setAddOpen(false)}
-                  onSubmit={handleAddSubmit}
-                />
-              )}
-              {rootProjects.map((node) => {
-                const path = [node.name]
-                const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
-                return isRenameTarget ? (
-                  <Box key={node.name}>
-                    <ProjectRenameInlineForm
-                      value={renameName}
-                      onChange={setRenameName}
-                      renameFromPath={renameFromPath}
-                      onSubmit={handleRenameSubmit}
-                      onCancel={() => setRenameOpen(false)}
-                      placeholder="Project name"
-                      saveAriaLabel="Save project rename"
-                      cancelAriaLabel="Cancel project rename"
-                    />
-                  </Box>
-                ) : (
-                  <Box key={node.name}>
-                    <FolderButton
-                      name={node.name}
-                      isActive={isSamePath(selectedPath, path)}
-                      onClick={() => {
-                        setSelectedPath(path)
-                      }}
-                      onDoubleClick={() => {
-                        setSelectedPath(path)
-                        setOpenedProjectPath(path)
-                      }}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        setMenuProjectPath(path)
-                        setMenuPos({ top: e.clientY, left: e.clientX })
-                      }}
-                      startIcon={
-                        <FolderOutlinedIcon
-                          sx={{
-                            fontSize: 18,
-                            opacity: isSamePath(selectedPath, path) ? 1 : 0.7,
-                          }}
-                        />
-                      }
-                    />
-                  </Box>
-                )
-              })}
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 0.5 }}>
-                  <SavedSnippetsList
-                    items={rootSnippetsItems}
-                    showEmptyMessage={rootProjects.length === 0}
-                    onSnippetContextMenu={(id, position) => {
-                      closeContextMenu()
-                      setSnippetMenuItemId(id)
-                      setSnippetMenuStorageKey(ROOT_SNIPPETS_KEY)
-                      setSnippetMenuPos(position)
-                    }}
-                  />
-                </Box>
+            {!driveConnected ? (
+              <Box
+                sx={{
+                  minHeight: 220,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 1.25,
+                  textAlign: 'center',
+                }}
+              >
+                <Button
+                  onClick={handleConnectGoogleDrive}
+                  disabled={driveConnecting}
+                  aria-label="Connect Google Drive"
+                  sx={{
+                    minWidth: 0,
+                    width: 72,
+                    height: 72,
+                    borderRadius: 3,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    bgcolor: 'background.default',
+                    color: 'primary.main',
+                  }}
+                >
+                  <AddToDriveOutlinedIcon sx={{ fontSize: 34 }} />
+                </Button>
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  {driveConnecting ? 'Connecting...' : 'Connect Google Drive'}
+                </Typography>
               </Box>
             ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {addOpen && (
-                  <ProjectInlineForm
-                    value={newName}
-                    placeholder="New subfolder"
-                    submitAriaLabel="Save new subfolder"
-                    cancelAriaLabel="Cancel new subfolder"
-                    onChange={setNewName}
-                    onCancel={() => setAddOpen(false)}
-                    onSubmit={handleAddSubmit}
-                  />
-                )}
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-                  {openedProjectChildren.map((node) => {
-                    const parentPath = openedProjectPath ?? []
-                    const path = [...parentPath, node.name]
-                    const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
-                    return isRenameTarget ? (
-                      <Box key={path.join('\u0000')}>
-                        <ProjectRenameInlineForm
-                          value={renameName}
-                          onChange={setRenameName}
-                          renameFromPath={renameFromPath}
-                          onSubmit={handleRenameSubmit}
-                          onCancel={() => setRenameOpen(false)}
-                          placeholder="Folder name"
-                          saveAriaLabel="Save folder rename"
-                          cancelAriaLabel="Cancel folder rename"
-                        />
-                      </Box>
-                    ) : (
-                      <Box key={path.join('\u0000')}>
-                        <FolderButton
-                          name={node.name}
-                          isActive={isSamePath(selectedPath, path)}
-                          onClick={() => setSelectedPath(path)}
-                          onDoubleClick={() => {
-                            setSelectedPath(path)
-                            setOpenedProjectPath(path)
-                          }}
-                          onContextMenu={(e) => {
-                            e.preventDefault()
-                            setMenuProjectPath(path)
-                            setMenuPos({ top: e.clientY, left: e.clientX })
-                          }}
-                          startIcon={
-                            <FolderOutlinedIcon
-                              sx={{
-                                fontSize: 18,
-                                opacity: isSamePath(selectedPath, path) ? 1 : 0.7,
-                              }}
-                            />
-                          }
-                        />
-                      </Box>
-                    )
-                  })}
-                </Box>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-                  <SavedSnippetsList
-                    items={openedProjectItems}
-                    showEmptyMessage={openedProjectChildren.length === 0}
-                    onSnippetContextMenu={(id, position) => {
-                      closeContextMenu()
-                      setSnippetMenuItemId(id)
-                      if (openedProjectPath) {
-                        setSnippetMenuStorageKey(getProjectStorageKey(openedProjectPath))
+              <>
+                <ProjectsToolbar
+                  addOpen={addOpen}
+                  isOpenedView={isOpenedView}
+                  label={openedProjectLabel}
+                  onBack={() => {
+                    if (openedProjectPath) {
+                      if (openedProjectPath.length > 1) {
+                        setOpenedProjectPath(openedProjectPath.slice(0, -1))
+                      } else {
+                        setOpenedProjectPath(null)
                       }
-                      setSnippetMenuPos(position)
-                    }}
-                  />
-                </Box>
-              </Box>
+                      return
+                    }
+                  }}
+                  onToggleAdd={() => {
+                    if (addOpen) {
+                      setAddOpen(false)
+                    } else {
+                      setNewName('')
+                      setAddOpen(true)
+                    }
+                  }}
+                />
+                {!isOpenedView ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                    {addOpen && (
+                      <ProjectInlineForm
+                        value={newName}
+                        placeholder="New project"
+                        submitAriaLabel="Save new project"
+                        cancelAriaLabel="Cancel new project"
+                        onChange={setNewName}
+                        onCancel={() => setAddOpen(false)}
+                        onSubmit={handleAddSubmit}
+                      />
+                    )}
+                    {rootProjects.map((node) => {
+                      const path = [node.name]
+                      const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
+                      return isRenameTarget ? (
+                        <Box key={node.name}>
+                          <ProjectRenameInlineForm
+                            value={renameName}
+                            onChange={setRenameName}
+                            renameFromPath={renameFromPath}
+                            onSubmit={handleRenameSubmit}
+                            onCancel={() => setRenameOpen(false)}
+                            placeholder="Project name"
+                            saveAriaLabel="Save project rename"
+                            cancelAriaLabel="Cancel project rename"
+                          />
+                        </Box>
+                      ) : (
+                        <Box key={node.name}>
+                          <FolderButton
+                            name={node.name}
+                            isActive={isSamePath(selectedPath, path)}
+                            onClick={() => {
+                              setSelectedPath(path)
+                            }}
+                            onDoubleClick={() => {
+                              setSelectedPath(path)
+                              setOpenedProjectPath(path)
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setMenuProjectPath(path)
+                              setMenuPos({ top: e.clientY, left: e.clientX })
+                            }}
+                            startIcon={
+                              <FolderOutlinedIcon
+                                sx={{
+                                  fontSize: 18,
+                                  opacity: isSamePath(selectedPath, path) ? 1 : 0.7,
+                                }}
+                              />
+                            }
+                          />
+                        </Box>
+                      )
+                    })}
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 0.5 }}>
+                      <SavedSnippetsList
+                        items={rootSnippetsItems}
+                        showEmptyMessage={rootProjects.length === 0}
+                        onSnippetContextMenu={(id, position) => {
+                          closeContextMenu()
+                          setSnippetMenuItemId(id)
+                          setSnippetMenuPath(null)
+                          setSnippetMenuPos(position)
+                        }}
+                      />
+                    </Box>
+                  </Box>
+                ) : (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {addOpen && (
+                      <ProjectInlineForm
+                        value={newName}
+                        placeholder="New subfolder"
+                        submitAriaLabel="Save new subfolder"
+                        cancelAriaLabel="Cancel new subfolder"
+                        onChange={setNewName}
+                        onCancel={() => setAddOpen(false)}
+                        onSubmit={handleAddSubmit}
+                      />
+                    )}
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                      {openedProjectChildren.map((node) => {
+                        const parentPath = openedProjectPath ?? []
+                        const path = [...parentPath, node.name]
+                        const isRenameTarget = renameOpen && isSamePath(renameFromPath, path)
+                        return isRenameTarget ? (
+                          <Box key={path.join('\u0000')}>
+                            <ProjectRenameInlineForm
+                              value={renameName}
+                              onChange={setRenameName}
+                              renameFromPath={renameFromPath}
+                              onSubmit={handleRenameSubmit}
+                              onCancel={() => setRenameOpen(false)}
+                              placeholder="Folder name"
+                              saveAriaLabel="Save folder rename"
+                              cancelAriaLabel="Cancel folder rename"
+                            />
+                          </Box>
+                        ) : (
+                          <Box key={path.join('\u0000')}>
+                            <FolderButton
+                              name={node.name}
+                              isActive={isSamePath(selectedPath, path)}
+                              onClick={() => setSelectedPath(path)}
+                              onDoubleClick={() => {
+                                setSelectedPath(path)
+                                setOpenedProjectPath(path)
+                              }}
+                              onContextMenu={(e) => {
+                                e.preventDefault()
+                                setMenuProjectPath(path)
+                                setMenuPos({ top: e.clientY, left: e.clientX })
+                              }}
+                              startIcon={
+                                <FolderOutlinedIcon
+                                  sx={{
+                                    fontSize: 18,
+                                    opacity: isSamePath(selectedPath, path) ? 1 : 0.7,
+                                  }}
+                                />
+                              }
+                            />
+                          </Box>
+                        )
+                      })}
+                    </Box>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                      <SavedSnippetsList
+                        items={openedProjectItems}
+                        showEmptyMessage={openedProjectChildren.length === 0}
+                        onSnippetContextMenu={(id, position) => {
+                          closeContextMenu()
+                          setSnippetMenuItemId(id)
+                          if (openedProjectPath) {
+                            setSnippetMenuPath(openedProjectPath)
+                          }
+                          setSnippetMenuPos(position)
+                        }}
+                      />
+                    </Box>
+                  </Box>
+                )}
+              </>
             )}
           </Box>
         </>
@@ -561,8 +680,11 @@ export default function SidebarApp() {
       >
         <MenuItem
           onClick={() => {
-            if (!snippetMenuItemId || !snippetMenuStorageKey) return
-            handleDeleteSavedSnippet(snippetMenuItemId, snippetMenuStorageKey)
+            if (!snippetMenuItemId) return
+            const key = snippetMenuPath
+              ? getProjectStorageKey(snippetMenuPath)
+              : ROOT_SNIPPETS_KEY
+            void handleDeleteSavedSnippet(snippetMenuItemId, key, snippetMenuPath)
             closeSnippetContextMenu()
           }}
         >

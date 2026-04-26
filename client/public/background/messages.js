@@ -3,7 +3,8 @@ function respond(sendResponse, payload) {
   return true
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return undefined
   if (!message?.type) return undefined
 
   if (message.type === 'emailFilerConnectDrive') {

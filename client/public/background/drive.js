@@ -57,8 +57,9 @@ async function getFileText(token, fileId) {
     { headers: { Authorization: `Bearer ${token}` } },
   )
   if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Drive API error (${response.status}): ${text}`)
+    const detail = await response.text().catch(() => '')
+    console.error(`Drive API error (${response.status}) fetching file ${fileId}:`, detail)
+    throw new Error(driveStatusMessage(response.status))
   }
   return response.text()
 }
@@ -261,8 +262,6 @@ async function pushStateToDriveAsFolders(token, rootFolderId, state) {
     await Promise.all(deletions.map((id) => tryDeleteDriveItem(token, id)))
   }
   if (!lastSynced) {
-    const existingItems = await listChildItems(token, rootFolderId)
-    await Promise.all(existingItems.map((item) => tryDeleteDriveItem(token, item.id)))
     for (const k of Object.keys(folderMap)) delete folderMap[k]
   }
 

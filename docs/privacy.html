@@ -90,8 +90,9 @@
     <li><strong>identity</strong> — enables the Google OAuth flow to connect Drive; no credentials
         are stored by the extension.</li>
     <li><strong>alarms</strong> — schedules periodic background sync with Google Drive.</li>
-    <li><strong>Host permission: mail.google.com</strong> — required to inject the sidebar into
-        Gmail pages.</li>
+    <li><strong>Content script access: mail.google.com</strong> — required to inject the sidebar
+        into Gmail pages. Granted via the <code>content_scripts</code> manifest field; the extension
+        does not request broad tab or browsing-history access.</li>
     <li><strong>Host permission: googleapis.com/drive</strong> — required to read and write files
         in your Drive when sync is enabled.</li>
   </ul>

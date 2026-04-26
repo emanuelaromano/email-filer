@@ -9,7 +9,7 @@ const SNIPPET_MIME_TYPE = 'text/plain'
 const LOCAL_STATE_KEY = 'emailFilerLocalState'
 const LOCAL_STATE_DIRTY_KEY = 'emailFilerLocalStateDirty'
 const LOCAL_STATE_REVISION_KEY = 'emailFilerLocalStateRevision'
-const SYNC_INTERVAL_MS = 5_000
+const SYNC_INTERVAL_MS = 3_000
 
 function getAuthToken(interactive) {
   return new Promise((resolve, reject) => {
@@ -578,12 +578,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         throw new Error('Parent folder no longer exists.')
       }
       const siblings = parentNode ? parentNode.children : next.projects
-      if (siblings.some((node) => node.name === name)) {
-        throw new Error(`A folder named "${name}" already exists here.`)
+      let uniqueName = name
+      if (siblings.some((node) => node.name === uniqueName)) {
+        let counter = 1
+        while (siblings.some((node) => node.name === `${name} (${counter})`)) {
+          counter += 1
+        }
+        uniqueName = `${name} (${counter})`
       }
-      siblings.push({ name, children: [] })
+      siblings.push({ name: uniqueName, children: [] })
       await saveLocalMutation(next)
-      sendResponse({ ok: true })
+      sendResponse({ ok: true, name: uniqueName })
     }).catch((error) => {
       sendResponse({
         ok: false,

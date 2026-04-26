@@ -36,6 +36,7 @@ type RuntimeResponse = {
   ok?: boolean
   error?: string
   projects?: unknown
+  name?: string
 }
 
 function sendRuntimeMessage<T = RuntimeResponse>(message: unknown): Promise<T> {
@@ -86,7 +87,7 @@ export function useExtensionProjects(driveConnected: boolean) {
       throw new Error(response?.error ?? 'Failed to create folder.')
     }
     await refreshProjects()
-    return true
+    return typeof response.name === 'string' ? response.name : trimmed
   }, [refreshProjects])
 
   const renameProject = useCallback(async (path: string[], to: string) => {

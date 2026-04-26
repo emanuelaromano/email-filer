@@ -337,12 +337,10 @@ export default function SidebarApp() {
     const trimmed = newName.trim()
     if (!trimmed) return
     const parentPath = openedProjectPath ?? []
-    const siblings = openedProjectPath ? openedProjectChildren : rootProjects
-    if (siblings.some((node) => node.name === trimmed)) return
     try {
-      const added = await addProject(trimmed, parentPath)
-      if (!added) return
-      const nextPath = [...parentPath, trimmed]
+      const actualName = await addProject(trimmed, parentPath)
+      if (!actualName) return
+      const nextPath = [...parentPath, actualName]
       setSelectedPath(nextPath)
       setNewName('')
       setAddOpen(false)

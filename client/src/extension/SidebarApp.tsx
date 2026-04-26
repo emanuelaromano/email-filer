@@ -19,7 +19,10 @@ import {
   SYNC_STATUS_KEY,
 } from './storageKeys'
 import { applyHighlightToSnippet } from './utils/highlightSnippet'
-import { registerSaveShortcut } from './utils/shortcuts'
+import {
+  registerSaveShortcut,
+  registerToggleSidebarShortcut,
+} from './utils/shortcuts'
 import {
   getNodeAtPath,
   useExtensionProjects,
@@ -272,6 +275,12 @@ export default function SidebarApp() {
       })
     })
   }, [openedProjectPath, saveHighlightedSelection, saveShortcutTarget])
+
+  useEffect(() => {
+    return registerToggleSidebarShortcut(() => {
+      setCollapsed((current) => !current)
+    })
+  }, [])
 
   useEffect(() => {
     let attempts = 0

@@ -26,3 +26,18 @@ export function registerSaveShortcut(onTrigger: ShortcutHandler): () => void {
   window.addEventListener('keydown', onKeyDown)
   return () => window.removeEventListener('keydown', onKeyDown)
 }
+
+export function registerToggleSidebarShortcut(onTrigger: ShortcutHandler): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (isEditableTarget(event.target)) return
+
+    const isRightArrow = event.key === 'ArrowRight'
+    if (!isRightArrow || !event.metaKey) return
+
+    event.preventDefault()
+    onTrigger()
+  }
+
+  window.addEventListener('keydown', onKeyDown)
+  return () => window.removeEventListener('keydown', onKeyDown)
+}
